@@ -1,0 +1,17 @@
+{
+  // The agent's typecheck (§7). Scoped to the jail so a broken edit is reported
+  // in terms of files the agent can actually fix — and so the check costs a
+  // fraction of a whole-project run, which is the difference between a gate
+  // that runs on every job and one that gets turned off.
+  //
+  // `incremental` is off on purpose: the project's own .tsbuildinfo is written
+  // by `tsc --noEmit` runs with a different `include`, and sharing it would let
+  // the two invalidate each other's cache.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false,
+    "plugins": []
+  },
+  "include": ["next-env.d.ts", "src/workspace/**/*.ts", "src/workspace/**/*.tsx"]
+}

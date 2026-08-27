@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+/*
+ * The studio has its own root layout and its own stylesheet so the workspace's
+ * html-level CSS and OriginKit @theme tokens cannot reach the editor chrome
+ * (§10). The preview is an iframe; this is the other half of that isolation.
+ *
+ * The palette is four stacked surfaces rather than one flat background. Depth is
+ * what separates a tool that looks built from a tool that looks assembled: the
+ * canvas sits BEHIND the preview card, so the page the user is editing reads as
+ * an object on a desk, not as a pane welded to a sidebar.
+ *
+ * Borders are alpha, not opaque greys. An opaque #1d1d27 hairline is only
+ * correct on the one surface it was picked against; the same rule drawn on the
+ * canvas and on a raised card needs to be two different colours, and picking one
+ * is what makes a UI look like it was assembled from screenshots. White at 6%
+ * composites correctly on every surface in the stack.
+ */
+:root {
+  --oe-canvas: #050507;   /* deepest — behind the preview card */
+  --oe-bg: #09090b;       /* app ground */
+  --oe-panel: #111113;    /* chat column, bars */
+  --oe-raised: #18181b;   /* cards, inputs, the floating toolbar */
+
+  --oe-border: rgb(255 255 255 / 0.06);
+  --oe-border-strong: rgb(255 255 255 / 0.10);
+
+  --oe-text: #fafafa;
+  --oe-muted: #a1a1aa;
+  --oe-faint: #71717a;
+
+  /*
+   * Load-bearing and rare (§10): the active mode, the streaming caret, a pinned
+   * chip, the send button. If more than a few things on screen are orange, the
+   * orange has stopped meaning anything.
+   */
+  --oe-accent: #ff6a3d;
+  --oe-accent-soft: #ff8a63;
+
+  /*
+   * Semantic colours ship with their surface and border already mixed, because
+   * the alternative is what this file used to have: eight different shades of
+   * red across six components, each one invented at its use site.
+   *
+   * `--oe-bad` is deliberately rose, not red. A warm orange accent and a warm
+   * red danger state a few pixels apart are the same colour to anyone not
+   * looking for the difference, and "destructive" is the one state that must
+   * never be mistaken for "active".
+   */
+  --oe-ok: #3dd68c;
+  --oe-warn: #e8c547;
+  --oe-bad: #fb5c74;
+
+  --oe-ok-bg: rgb(61 214 140 / 0.10);
+  --oe-ok-border: rgb(61 214 140 / 0.22);
+  --oe-bad-bg: rgb(251 92 116 / 0.10);
+  --oe-bad-border: rgb(251 92 116 / 0.24);
+  --oe-accent-bg: rgb(255 106 61 / 0.10);
+  --oe-accent-border: rgb(255 106 61 / 0.28);
+
+  /* The build-error overlay covers the whole preview card, so it needs a
+   * ground of its own rather than a red wash over the canvas (§10). */
+  --oe-bad-canvas: #180a0d;
+
+  /* Diff gutters — the only place ok/bad are used as a page-wide wash. */
+  --oe-add-bg: rgb(61 214 140 / 0.09);
+  --oe-add-text: #9beec4;
+  --oe-del-bg: rgb(251 92 116 / 0.09);
+  --oe-del-text: #ffb3bf;
+}
+
+@theme inline {
+  --color-oe-canvas: var(--oe-canvas);
+  --color-oe-bg: var(--oe-bg);
+  --color-oe-panel: var(--oe-panel);
+  --color-oe-raised: var(--oe-raised);
+  --color-oe-border: var(--oe-border);
+  --color-oe-border-strong: var(--oe-border-strong);
+  --color-oe-text: var(--oe-text);
+  --color-oe-muted: var(--oe-muted);
+  --color-oe-faint: var(--oe-faint);
+  --color-oe-accent: var(--oe-accent);
+  --color-oe-accent-soft: var(--oe-accent-soft);
+  --color-oe-ok: var(--oe-ok);
+  --color-oe-warn: var(--oe-warn);
+  --color-oe-bad: var(--oe-bad);
+
+  --color-oe-ok-bg: var(--oe-ok-bg);
+  --color-oe-ok-border: var(--oe-ok-border);
+  --color-oe-bad-bg: var(--oe-bad-bg);
+  --color-oe-bad-border: var(--oe-bad-border);
+  --color-oe-accent-bg: var(--oe-accent-bg);
+  --color-oe-accent-border: var(--oe-accent-border);
+
+  --color-oe-add-bg: var(--oe-add-bg);
+  --color-oe-add-text: var(--oe-add-text);
+  --color-oe-del-bg: var(--oe-del-bg);
+  --color-oe-del-text: var(--oe-del-text);
+
+  /*
+   * The chrome type scale. Four sizes, named for their job — before this there
+   * were 33 hard-coded bracket values across four numbers and no rule about
+   * which went where.
+   */
+  --text-ui-2xs: 10px;
+  --text-ui-2xs--line-height: 1.4;
+  --text-ui-xs: 11px;
+  --text-ui-xs--line-height: 1.45;
+  --text-ui-sm: 12px;
+  --text-ui-sm--line-height: 1.5;
+  --text-ui: 13px;
+  --text-ui--line-height: 1.6;
+  --text-ui-md: 14px;
+  --text-ui-md--line-height: 1.55;
+
+  /* Radii, likewise: one per role rather than six picked by feel. */
+  --radius-chip: 6px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-sheet: 16px;
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html, body { height: 100%; }
+
+body {
+  background: var(--oe-bg);
+  color: var(--oe-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The uppercase micro-label used for roles, section headers and hints. */
+@utility oe-label {
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+/* Chat scrollbar: present when you need it, invisible when you don't. */
+@utility oe-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--oe-border-strong) transparent;
+}
+
+@keyframes oe-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@utility oe-rise {
+  animation: oe-rise 0.22s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}

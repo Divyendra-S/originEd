@@ -1,0 +1,338 @@
+/* Google font @imports MUST come first — a nested @import after other rules breaks PostCSS. */
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Audiowide&family=DM+Mono:wght@400;500&family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Hedvig+Letters+Serif:opsz@12..24&family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700&family=Lato:wght@400;700&family=Manrope:wght@400;500;600;700&family=Monda:wght@400;500;600;700&family=Outfit:wght@400;500;600&family=Playfair+Display:ital,wght@0,700;1,700&family=Red+Hat+Display:wght@400;500;600;700&family=Rethink+Sans:wght@400;500;600;700&family=Tillana:wght@400;500;600;700&family=Urbanist:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+@import "./originkit-section-themes.css";
+@import "./originkit-section-theme.css";
+
+html,
+body {
+  height: 100%;
+}
+
+/* ── Inspector chrome (§11). Lives here, not in the workspace, so the agent
+   cannot accidentally edit the tool it is being watched through. ── */
+
+/*
+ * The inspector's own palette. These are NOT the workspace's tokens and NOT the
+ * studio's — the iframe is a separate document, so the accent has to be restated
+ * here. It was previously one hex literal written out eight times; changing the
+ * studio accent left the selection outlines a different colour from the chrome
+ * that commands them, which reads as a bug in the tool rather than a choice.
+ */
+:root {
+  --oe-ink: #ff6a3d;          /* matches --oe-accent in studio.css */
+  --oe-ink-ground: #0b0b0d;   /* the chrome's own background */
+  --oe-flash: #3dd68c;        /* the post-edit pulse — success, not selection */
+  --oe-remove: #fb5c74;       /* matches --oe-bad: rose, so it cannot read as the accent */
+  --oe-remove-ground: #180a0d;
+  --oe-chrome-line: rgb(255 255 255 / 0.1);
+  --oe-chrome-text: #f4f4f5;
+  --oe-chrome-faint: #8a8a93;
+}
+
+/* Select mode: the page becomes a canvas. Nothing navigates, nothing selects. */
+body[data-oe-mode="select"] {
+  cursor: crosshair;
+  user-select: none;
+}
+
+/*
+ * The tool's own DOM opts out of all of it. Without this the comment popup
+ * inherits `user-select: none` from the body and its input cannot be
+ * double-clicked, selected or corrected — an input you can only append to.
+ */
+[data-oe-chrome],
+[data-oe-chrome] * {
+  cursor: default;
+  user-select: auto;
+}
+
+.oe-section {
+  scroll-margin-top: 1rem;
+}
+
+/* ── What the cursor is over ────────────────────────────────────────────── */
+
+/*
+ * The SECTION reads as a tint and the ELEMENT reads as a line. Two hovers are
+ * live at once — you are always inside a section and usually over something
+ * inside it — so they cannot both be outlines or the page turns into a diagram.
+ */
+body[data-oe-mode="select"] .oe-section::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  border: 1px solid transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+body[data-oe-mode="select"] .oe-section[data-oe-hover]::after {
+  background: color-mix(in srgb, var(--oe-ink) 4%, transparent);
+}
+
+body[data-oe-mode="select"] .oe-section[data-oe-selected]::after {
+  border-color: color-mix(in srgb, var(--oe-ink) 55%, transparent);
+}
+
+/*
+ * Element outlines, not `::after` boxes, for a decisive reason: replaced
+ * elements — img, input, video, canvas, iframe, select, textarea — have no
+ * generated content boxes at all, and those are exactly what a user points at.
+ * An outline also takes no part in layout, so an inline <a> wrapping two lines
+ * gets a correct two-part outline where `::after { inset: 0 }` renders nothing.
+ *
+ * `outline-offset: -1px` paints INSIDE the border box, which is what stops an
+ * `overflow: hidden` ancestor — the hero is one — from clipping it away.
+ */
+body[data-oe-mode="select"] [data-oe-hover-el] {
+  outline: 1px dashed color-mix(in srgb, var(--oe-ink) 70%, transparent);
+  outline-offset: -1px;
+}
+
+/* Post-edit confirmation pulse, driven by a `flash` postMessage. */
+@keyframes oe-flash {
+  0%, 100% { box-shadow: inset 0 0 0 0 transparent; }
+  35%      { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--oe-flash) 70%, transparent); }
+}
+.oe-section[data-oe-flash] {
+  animation: oe-flash 900ms ease;
+}
+
+/* ── Pins (§11) ─────────────────────────────────────────────────────────────
+   A pinned thing is marked in BOTH modes: the pin belongs to the page, not to
+   the Select tool, and the whole point of the feature is that you can see what
+   the next message is carrying while you browse. ── */
+
+/* A pinned ELEMENT. The marker for it sits in the section's rail, which may be
+   a long way up the page, so this outline is the only thing that says WHERE. */
+[data-oe-target] {
+  outline: 1.5px solid var(--oe-ink);
+  outline-offset: -1px;
+}
+
+/* A pinned SECTION — the whole thing, so the frame goes round the whole thing. */
+.oe-section[data-oe-pinned]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2147482999;
+  pointer-events: none;
+  border: 1.5px solid color-mix(in srgb, var(--oe-ink) 50%, transparent);
+}
+
+/*
+ * The rail. Markers cannot sit on the elements they name — <input> and <img>
+ * are void, and a <button> inside a <button> is invalid HTML — so every marker
+ * in a section collects here, in one flex row, with zero coordinate math. It is
+ * the only foreign direct child of a boundary, always last, and it carries
+ * `data-oe-chrome` so it never shifts a single element path.
+ */
+.oe-pin-rail {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 2147483001;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.oe-pin {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--oe-chrome-line);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--oe-ink-ground) 88%, transparent);
+  backdrop-filter: blur(10px);
+  color: var(--oe-chrome-text);
+  font: 500 11px/1.45 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+
+/* Browse mode: present, but not competing with the page it is annotating. */
+body[data-oe-mode="browse"] .oe-pin {
+  opacity: 0.72;
+}
+
+.oe-pin-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oe-pin-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--oe-ink);
+}
+
+.oe-pin:hover {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--oe-remove) 55%, transparent);
+  background: color-mix(in srgb, var(--oe-remove-ground) 92%, transparent);
+  color: var(--oe-remove);
+}
+
+.oe-pin:hover .oe-pin-dot {
+  background: var(--oe-remove);
+}
+
+/* A marker carrying notes OPENS them rather than unpinning (§11), so it must
+   not borrow the removal colour on hover — the rose is a promise about what the
+   click does. */
+.oe-pin[data-oe-notes]:hover {
+  border-color: color-mix(in srgb, var(--oe-ink) 65%, transparent);
+  background: color-mix(in srgb, var(--oe-ink-ground) 96%, transparent);
+  color: var(--oe-ink);
+}
+
+.oe-pin[data-oe-notes]:hover .oe-pin-dot {
+  background: var(--oe-ink);
+}
+
+/* The element behind this pin is gone. Say so on the marker rather than
+   deleting it — the user attached context and is entitled to know it lapsed. */
+.oe-pin[data-oe-lost] {
+  border-style: dashed;
+  color: var(--oe-chrome-faint);
+}
+
+.oe-pin[data-oe-lost] .oe-pin-dot {
+  background: var(--oe-chrome-faint);
+}
+
+/* The section's open-note count. An empty badge must take no space, so a pin
+   with nothing on it still renders as a plain pill. */
+.oe-pin-count {
+  min-width: 14px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--oe-ink);
+  color: #180a04;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+}
+
+.oe-pin-count:empty {
+  display: none;
+}
+
+/* ── The drag ───────────────────────────────────────────────────────────── */
+
+.oe-marquee {
+  position: fixed;
+  z-index: 2147483004;
+  pointer-events: none;
+  border: 1px solid var(--oe-ink);
+  background: color-mix(in srgb, var(--oe-ink) 8%, transparent);
+}
+
+/*
+ * The popup: where the drag ends, the note begins. Anchored to the rectangle
+ * rather than to a panel somewhere else on screen, because the whole gesture is
+ * "point at this and say something about it" and a round trip to the sidebar to
+ * finish the sentence would break it in half.
+ */
+.oe-popup {
+  position: fixed;
+  z-index: 2147483005;
+  width: 320px;
+  padding: 10px;
+  border: 1px solid var(--oe-chrome-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--oe-ink-ground) 94%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 55%);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: var(--oe-chrome-text);
+}
+
+.oe-popup-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.oe-popup-dot {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--oe-ink);
+}
+
+.oe-popup-what {
+  overflow: hidden;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oe-popup-where {
+  margin-left: auto;
+  flex: none;
+  color: var(--oe-chrome-faint);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.oe-popup-input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--oe-chrome-line);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.03);
+  color: var(--oe-chrome-text);
+  font: 400 13px/1.5 ui-sans-serif, system-ui, sans-serif;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.oe-popup-input::placeholder {
+  color: var(--oe-chrome-faint);
+}
+
+.oe-popup-input:focus {
+  border-color: color-mix(in srgb, var(--oe-ink) 60%, transparent);
+}
+
+.oe-popup-foot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 2px 0;
+  color: var(--oe-chrome-faint);
+  font-size: 10px;
+}
+
+.oe-popup-foot span + kbd {
+  margin-left: 6px;
+}
+
+.oe-kbd {
+  padding: 1px 4px;
+  border: 1px solid var(--oe-chrome-line);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 9px;
+  line-height: 1.5;
+}

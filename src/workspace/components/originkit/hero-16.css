@@ -1,0 +1,86 @@
+/* hero-16 — Visionary bezier-curve newsletter hero (from diip3sh/sections section-22) */
+
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@400;500;600;700&display=swap");
+
+@theme {
+  --font-instrument-serif: "Instrument Serif", Georgia, serif;
+  --font-tight: "Inter Tight", Inter, ui-sans-serif, sans-serif;
+  --font-helvetica-neue: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+/* Animated glow border — email form */
+@property --glow-a {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes form-glow-spin {
+  to {
+    --glow-a: 1turn;
+  }
+}
+
+.form-glow-border {
+  --glow-a: 0deg;
+  position: relative;
+  isolation: isolate;
+  padding: 6px;
+  border-radius: 100px;
+  border: none;
+  box-shadow: 0 0 20px rgba(0, 178, 255, 0.2);
+  transition: box-shadow 0.2s ease;
+}
+
+.form-glow-border::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  padding: 2px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--glow-a),
+    transparent 0%,
+    transparent 62%,
+    rgba(0, 178, 255, 0) 68%,
+    rgba(0, 178, 255, 0.35) 78%,
+    rgba(140, 220, 255, 0.85) 88%,
+    rgb(0, 178, 255) 92%,
+    rgba(140, 220, 255, 0.85) 96%,
+    rgba(0, 178, 255, 0.35) 99%,
+    transparent 100%
+  );
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  animation: form-glow-spin 8s linear infinite;
+}
+
+.form-glow-border > * {
+  position: relative;
+  z-index: 1;
+}
+
+.form-glow-border:focus-within {
+  box-shadow: 0 0 28px rgba(0, 178, 255, 0.4);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .form-glow-border:hover {
+    box-shadow: 0 0 28px rgba(0, 178, 255, 0.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .form-glow-border::before {
+    animation: none;
+    --glow-a: 120deg;
+  }
+}
