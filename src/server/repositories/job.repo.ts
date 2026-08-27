@@ -53,14 +53,31 @@ export async function markRunning(id: string): Promise<void> {
   if (res.error) throw new Error(`job.markRunning: ${res.error.message}`);
 }
 
+/**
+ * Move a job to its final status, and say whether THIS caller is the one that
+ * moved it.
+ *
+ * The `status IN (queued, running)` filter makes the transition a claim rather
+ * than a write: exactly one caller can win it, and everyone else gets `false`.
+ * That matters because two of them race by design — the worker finishing, and a
+ * cancel that could not reach the worker's process (`job.service.cancel`). Both
+ * used to write a row and then emit their own `done`, which is how one job ended
+ * up with two `done` events and a `job_events_job_id_seq_key` violation.
+ *
+ * Returning the claim rather than throwing on a lost race: losing is normal, and
+ * the loser has something sensible to do — stay quiet.
+ */
 export async function finish(
   id: string,
   status: Extract<JobStatus, "succeeded" | "failed" | "cancelled">,
   error?: string | null,
-): Promise<void> {
+): Promise<boolean> {
   const res = await db()
     .from("jobs")
     .update({ status, error: error ?? null, finished_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .in("status", ["queued", "running"])
+    .select("id");
   if (res.error) throw new Error(`job.finish: ${res.error.message}`);
+  return ((res.data as { id: string }[] | null) ?? []).length > 0;
 }

@@ -21,6 +21,10 @@ const ITEMS = [
     title: "Keep what works",
     body: "Every write is recorded before and after, so any turn can be reviewed as a diff — or undone.",
   },
+  {
+    title: "See it live",
+    body: "Watch updates hot-reload instantly in your preview so you can iterate quickly and ship with complete confidence.",
+  },
 ] as const;
 
 export default function Features() {

@@ -98,12 +98,49 @@ export async function createEmitter(jobId: string, deps: EmitterDeps = defaultDe
     }
   }
 
+  /**
+   * Write, and if the number was taken, renumber and write again.
+   *
+   * `counter` is a guess about a column two processes can reach. It is seeded
+   * from `max(seq)` once and then only ever incremented, which is right for the
+   * one worker that owns the job — and wrong the moment anything else appends,
+   * which `job.service.cancel` does when it cannot find the job in its own
+   * queue. Observed on job 8bf0ae6e: the cancel path took seq 2, the still-live
+   * worker asked for seq 2, and the insert error propagated out of the agent
+   * loop and turned a cancelled job into a failed one.
+   *
+   * Re-reading `max(seq)` is the repair rather than a client-side bump, because
+   * losing the race means we do not know how far ahead the other writer got. One
+   * retry: a second collision would mean a writer that is still going, and this
+   * is an event stream, not a lock.
+   */
+  async function write(events: eventRepo.PendingEvent[], batched: boolean): Promise<number> {
+    // Which repo call is not a size decision — anything carrying coalesced text
+    // goes through `appendMany`, a lone checkpoint through `append`, so the two
+    // paths stay legible in a trace even when the batch happens to hold one row.
+    const put = (rows: eventRepo.PendingEvent[]) =>
+      batched ? deps.appendMany(rows) : deps.append(rows[0]);
+    try {
+      await put(events);
+      return events[events.length - 1].seq;
+    } catch (err) {
+      if (!(err instanceof eventRepo.SeqTakenError)) throw err;
+      const base = await deps.maxSeq(jobId);
+      // Whatever the other writer reached is now the floor for everything after
+      // this batch too, or the very next event would collide all over again.
+      const renumbered = events.map((event, i) => ({ ...event, seq: base + i + 1 }));
+      counter = Math.max(counter, base + events.length);
+      await put(renumbered);
+      return renumbered[renumbered.length - 1].seq;
+    }
+  }
+
   function writePending(): Promise<void> {
     clearTimer();
     if (pending.length === 0) return Promise.resolve();
     const batch = pending;
     pending = [];
-    return serialize(() => deps.appendMany(batch)).then(() => {});
+    return serialize(() => write(batch, true)).then(() => {});
   }
 
   async function emit(data: JobEventData): Promise<void> {
@@ -129,14 +166,14 @@ export async function createEmitter(jobId: string, deps: EmitterDeps = defaultDe
     const seq = ++counter;
     const event: eventRepo.PendingEvent = { jobId, seq, data };
 
-    if (batch.length > 0) {
-      batch.push(event);
-      await serialize(() => deps.appendMany(batch));
-    } else {
-      await serialize(() => deps.append(event));
-    }
+    const batched = batch.length > 0;
+    if (batched) batch.push(event);
+    // Publish the seq the row actually got, not the one we asked for: the bus
+    // seq becomes the client's Last-Event-ID, and a number Postgres never used
+    // would make the next replay skip everything up to it.
+    const written = await serialize(() => write(batched ? batch : [event], batched));
 
-    deps.publish({ seq, jobId, ...data });
+    deps.publish({ seq: written, jobId, ...data });
   }
 
   const emitter: JobEmitter = {

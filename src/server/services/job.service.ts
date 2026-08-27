@@ -54,7 +54,7 @@ async function execute(jobId: string, signal: AbortSignal): Promise<void> {
       });
     }
 
-    await jobRepo.finish(jobId, "succeeded");
+    const claimed = await jobRepo.finish(jobId, "succeeded");
 
     // The notes this turn carried are answered. Best-effort on purpose: the run
     // succeeded, and a failure to tick off a note must not rewrite that verdict
@@ -63,7 +63,12 @@ async function execute(jobId: string, signal: AbortSignal): Promise<void> {
       .resolveForJob(jobId, job.context)
       .catch((err) => console.error(`[job.service] could not resolve notes for ${jobId}`, err));
 
-    await emitter.emit({ type: "done", status: "succeeded", filesChanged: result.filesChanged });
+    // Someone else already ended this job — a cancel that could not reach this
+    // process. It said `done` on our behalf and the client has moved on, so
+    // saying it again would be a second ending for one turn.
+    if (claimed) {
+      await emitter.emit({ type: "done", status: "succeeded", filesChanged: result.filesChanged });
+    }
   } catch (err) {
     const cancelled = signal.aborted || err instanceof agent.Cancelled;
     const status: JobStatus = cancelled ? "cancelled" : "failed";
@@ -71,12 +76,14 @@ async function execute(jobId: string, signal: AbortSignal): Promise<void> {
 
     try {
       await emitter.flush();
-      if (!cancelled) {
-        console.error(`[job.service] job ${jobId} failed`, err);
-        await emitter.emit({ type: "error", message });
+      // Claim the ending BEFORE describing it, so a job another process already
+      // closed out does not get an `error` card after its `done`.
+      const claimed = await jobRepo.finish(jobId, status, cancelled ? null : message);
+      if (!cancelled) console.error(`[job.service] job ${jobId} failed`, err);
+      if (claimed) {
+        if (!cancelled) await emitter.emit({ type: "error", message });
+        await emitter.emit({ type: "done", status, filesChanged: 0 });
       }
-      await jobRepo.finish(jobId, status, cancelled ? null : message);
-      await emitter.emit({ type: "done", status, filesChanged: 0 });
     } catch (reportErr) {
       // Postgres is unreachable. Nothing useful is left to do but say so loudly —
       // the SSE client falls back to polling the job row on reconnect.
@@ -95,12 +102,20 @@ export async function cancel(jobId: string): Promise<{ status: JobStatus }> {
   const outcome = queue.cancel(jobId);
 
   // A running task aborts its own signal and writes its own terminal row through
-  // `execute`'s catch. A queued one never gets there, so close it out here.
+  // `execute`'s catch. A queued one never gets there, so close it out here — and
+  // so does `not-found`, which is not always "already gone": the queue lives in
+  // ONE process, so a deployment running more than one has cancels landing on a
+  // process that never saw the job while the worker runs happily in another.
+  // Hence the claim: `finish` decides who ends the job, and only the winner
+  // says so. Getting this wrong is what produced two `done` events for job
+  // 8bf0ae6e and a unique-constraint failure on the seq behind them.
   if (outcome !== "cancelled-running") {
-    const emitter = await createEmitter(jobId);
-    await jobRepo.finish(jobId, "cancelled");
-    await emitter.emit({ type: "done", status: "cancelled", filesChanged: 0 });
-    await emitter.dispose();
+    const claimed = await jobRepo.finish(jobId, "cancelled");
+    if (claimed) {
+      const emitter = await createEmitter(jobId);
+      await emitter.emit({ type: "done", status: "cancelled", filesChanged: 0 });
+      await emitter.dispose();
+    }
   }
 
   return { status: "cancelled" };

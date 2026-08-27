@@ -323,7 +323,7 @@ const Hero = () => {
           }}
           segments={[
             { text: "Stay ahead of the\n" },
-            { text: "(bazier)", className: "italic" },
+            { text: "(bezier)", className: "italic" },
             { text: " curve" },
           ]}
         />

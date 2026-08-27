@@ -4,7 +4,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { JobEvent } from "@/lib/types";
-import type { PendingEvent } from "@/server/repositories/event.repo";
+import { SeqTakenError, type PendingEvent } from "@/server/repositories/event.repo";
 import { createEmitter, flushJob, FLUSH_MS, type EmitterDeps } from "./job-emitter";
 
 interface Recorder {
@@ -244,5 +244,90 @@ describe("job-emitter", () => {
     ]);
 
     expect(rec.persisted.map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
+  /**
+   * Two writers, one `unique (job_id, seq)`.
+   *
+   * The queue is per-process, so a cancel that lands anywhere else appends to a
+   * job whose worker is still alive and still counting. That happened to job
+   * 8bf0ae6e: the insert error came back through `emit`, out of the agent loop,
+   * and turned a cancelled job into a failed one with a Postgres constraint name
+   * in the chat.
+   */
+  describe("when another writer has taken the seq", () => {
+    /** A `job_events` table with a real unique index on (job_id, seq). */
+    function table(taken: number[]) {
+      const rows = new Set(taken);
+      const put = (events: PendingEvent[]) => {
+        for (const event of events) {
+          if (rows.has(event.seq)) throw new SeqTakenError(event.seq);
+        }
+        for (const event of events) rows.add(event.seq);
+      };
+      return {
+        rows,
+        deps: {
+          maxSeq: async () => Math.max(0, ...rows),
+          append: async (event: PendingEvent) => put([event]),
+          appendMany: async (events: PendingEvent[]) => put(events),
+          publish: () => {},
+        } satisfies EmitterDeps,
+      };
+    }
+
+    it("renumbers past the other writer instead of failing the job", async () => {
+      // The worker emitted `running` as seq 1; a cancel elsewhere then took 2.
+      const t = table([1, 2]);
+      const emitter = await createEmitter("job-1", t.deps);
+
+      await expect(
+        emitter.emit({ type: "tool_call", id: "c1", name: "read_file", args: {} }),
+      ).resolves.toBeUndefined();
+      expect([...t.rows].sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    });
+
+    it("tells the bus the seq Postgres actually used", async () => {
+      const t = table([1, 2]);
+      const published: JobEvent[] = [];
+      const emitter = await createEmitter("job-1", { ...t.deps, publish: (e) => published.push(e) });
+
+      await emitter.emit({ type: "tool_call", id: "c1", name: "read_file", args: {} });
+      // Publishing the 2 it asked for would become the client's Last-Event-ID,
+      // and the replay after a reconnect would start past its own event.
+      expect(published.map((e) => e.seq)).toEqual([3]);
+    });
+
+    it("keeps counting from there, so the next event does not collide too", async () => {
+      const t = table([1, 2, 3, 4]);
+      const emitter = await createEmitter("job-1", t.deps);
+
+      await emitter.emit({ type: "tool_call", id: "c1", name: "read_file", args: {} });
+      await emitter.emit({ type: "done", status: "succeeded", filesChanged: 0 });
+      expect([...t.rows].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it("carries the coalesced text across with it", async () => {
+      const t = table([1, 2]);
+      const emitter = await createEmitter("job-1", t.deps);
+
+      await emitter.emit({ type: "text_delta", text: "one" });
+      await emitter.emit({ type: "tool_call", id: "c1", name: "read_file", args: {} });
+      expect([...t.rows].sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
+    });
+
+    it("still throws when the write failed for any other reason", async () => {
+      const rec = recorder();
+      const emitter = await createEmitter("job-1", {
+        ...rec.deps,
+        append: async () => {
+          throw new Error("event.append: connection refused");
+        },
+      });
+
+      await expect(emitter.emit({ type: "status", status: "running" })).rejects.toThrow(
+        "connection refused",
+      );
+    });
   });
 });

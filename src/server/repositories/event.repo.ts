@@ -16,11 +16,32 @@ export interface PendingEvent {
   data: JobEventData;
 }
 
+/**
+ * `unique (job_id, seq)` rejected the write — someone else is numbering events
+ * for this job.
+ *
+ * Its own class because it is the one insert failure that is recoverable: the
+ * event is fine, the number is taken, and the emitter can pick another. Every
+ * other error means Postgres is unreachable, which is not.
+ */
+export class SeqTakenError extends Error {
+  constructor(readonly seq: number) {
+    super(`event seq ${seq} is already taken`);
+    this.name = "SeqTakenError";
+  }
+}
+
+/** PostgREST surfaces a unique violation as SQLSTATE 23505. */
+function raise(what: string, error: { message: string; code?: string }, seq: number): never {
+  if (error.code === "23505") throw new SeqTakenError(seq);
+  throw new Error(`${what}: ${error.message}`);
+}
+
 export async function append(event: PendingEvent): Promise<void> {
   const res = await db()
     .from("job_events")
     .insert({ job_id: event.jobId, seq: event.seq, type: event.data.type, data: event.data });
-  if (res.error) throw new Error(`event.append: ${res.error.message}`);
+  if (res.error) raise("event.append", res.error, event.seq);
 }
 
 /** Batched insert — text_delta rows are coalesced on a ~250ms flush (§8). */
@@ -29,7 +50,9 @@ export async function appendMany(events: PendingEvent[]): Promise<void> {
   const res = await db()
     .from("job_events")
     .insert(events.map((e) => ({ job_id: e.jobId, seq: e.seq, type: e.data.type, data: e.data })));
-  if (res.error) throw new Error(`event.appendMany: ${res.error.message}`);
+  // The batch is one statement, so one taken number rejects all of it; the first
+  // is the one the caller has to renumber from.
+  if (res.error) raise("event.appendMany", res.error, events[0].seq);
 }
 
 /** Replay for a reconnecting EventSource: everything after its Last-Event-ID. */
