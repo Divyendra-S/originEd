@@ -15,6 +15,12 @@
  * an offer, not a gate: type and press Enter to send the turn from here, or
  * ignore it and write in the composer against the chips already waiting there.
  *
+ * While a box is open it takes the next CLICK. That click closes it and selects
+ * nothing, and until it comes nothing highlights under the cursor — because a
+ * click that both dismissed the box and pinned whatever was underneath meant
+ * you could not put the box away without picking something up. Click again and
+ * the page is live as usual. A drag is unambiguous and is never swallowed.
+ *
  * Deliberately OUTSIDE src/workspace/: this is the lens the user watches the
  * page through, and the agent must not be able to edit it.
  */
@@ -128,12 +134,34 @@ export function Inspector() {
   const modeRef = useRef<PreviewMode>("browse");
   const pinsRef = useRef<Pin[]>([]);
   const unresolvedRef = useRef<string[]>([]);
-  const dragRef = useRef<{ x: number; y: number; live: boolean } | null>(null);
+  const dragRef = useRef<{ x: number; y: number; live: boolean; dismissing: boolean } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  /**
+   * Whether a box is open, mirrored out of state.
+   *
+   * The pointer handlers are registered once, in an effect that must not
+   * re-subscribe every time a box opens or closes — and `pointerdown` has to
+   * know, in the same tick it fires, whether this click's job is to dismiss one.
+   * Written by the two functions below rather than by an effect, because an
+   * effect lands a frame late and that frame is the whole question.
+   */
+  const popupOpenRef = useRef(false);
 
   const closePopup = useCallback(() => {
+    popupOpenRef.current = false;
     setPopup(null);
     setNote("");
+  }, []);
+
+  const openPopup = useCallback((next: Popup) => {
+    popupOpenRef.current = true;
+    // Hover is suppressed while a box is open, so the highlight this click was
+    // made against goes with it. What stays is the pin's own outline, which is
+    // the honest mark: that element is pinned, and the cursor is now busy.
+    clearAttr(document, "data-oe-hover");
+    clearAttr(document, "data-oe-hover-el");
+    setNote("");
+    setPopup(next);
   }, []);
 
   /**
@@ -243,6 +271,9 @@ export function Inspector() {
     function onPointerOver(e: PointerEvent) {
       if (modeRef.current !== "select" || dragRef.current?.live) return;
       if (isChromeTarget(e.target)) return;
+      // With a box open the next click only dismisses it. Lighting up whatever
+      // is under the cursor would promise a pin that click is not going to make.
+      if (popupOpenRef.current) return;
       hoverAt(e.target);
     }
 
@@ -250,8 +281,14 @@ export function Inspector() {
       if (modeRef.current !== "select" || e.button !== 0) return;
       if (isChromeTarget(e.target)) return; // the marker and the popup are ours
       e.preventDefault();
-      closePopup();
-      dragRef.current = { x: e.clientX, y: e.clientY, live: false };
+      // A click made while a box is open DISMISSES it and does nothing else.
+      // It used to close the box and pin whatever happened to be underneath in
+      // the same gesture, so clicking away to get rid of the box left you
+      // holding a selection you never asked for. A drag is unambiguous and
+      // still runs — which of the two this was is only known at `pointerup`.
+      const dismissing = popupOpenRef.current;
+      if (dismissing) closePopup();
+      dragRef.current = { x: e.clientX, y: e.clientY, live: false, dismissing };
       // Captured on the root: a drag that ends with the pointer outside the
       // iframe — over the chat, or off the window — otherwise never delivers
       // `pointerup` here, and the marquee sticks to the page until the next click.
@@ -282,6 +319,15 @@ export function Inspector() {
         // A plain click. Hit-tested rather than read off `e.target`, because
         // pointer capture has retargeted the event to the root element by now.
         const hit = doc.elementFromPoint(e.clientX, e.clientY);
+
+        if (start.dismissing) {
+          // The box is gone and that was the whole job. Re-light what is under
+          // the cursor: the pointer has not moved, so no `pointerover` is
+          // coming to say that this thing is pinnable again.
+          hoverAt(hit);
+          return;
+        }
+
         const boundary = boundaryFrom(hit);
         if (!boundary || !hit) return;
         const el = meaningfulFrom(boundary, hit);
@@ -298,8 +344,7 @@ export function Inspector() {
         // a thing the user just took away. `onPointerDown` already closed any
         // popup that was open, so this branch has only to not open a new one.
         if (wasPinned) return;
-        setNote("");
-        setPopup({ box: pointBox(e.clientX, e.clientY), targets: [target], gesture: "click" });
+        openPopup({ box: pointBox(e.clientX, e.clientY), targets: [target], gesture: "click" });
         return;
       }
 
@@ -310,8 +355,7 @@ export function Inspector() {
       // pointer lifts — the chips are already in the composer, so dismissing the
       // popup costs the user nothing and they can write over there instead.
       post({ source: "preview", type: "pick", targets, note: null, gesture: "drag" });
-      setNote("");
-      setPopup({ box, targets, gesture: "drag" });
+      openPopup({ box, targets, gesture: "drag" });
     }
 
     function onClick(e: MouseEvent) {
@@ -323,6 +367,9 @@ export function Inspector() {
       if (key) {
         e.preventDefault();
         e.stopPropagation();
+        // Unpinning the thing the box is asking about would leave the question
+        // standing over nothing, so the box goes with it.
+        closePopup();
         post({ source: "preview", type: "pin_click", key });
         return;
       }
@@ -374,7 +421,7 @@ export function Inspector() {
       doc.removeEventListener("pointerup", onPointerUp, true);
       doc.removeEventListener("click", onClick, true);
     };
-  }, [closePopup, commit]);
+  }, [closePopup, commit, openPopup]);
 
   // The input is the point of the popup, so it takes focus the instant it opens.
   useEffect(() => {

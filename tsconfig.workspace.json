@@ -4,16 +4,45 @@
   // fraction of a whole-project run, which is the difference between a gate
   // that runs on every job and one that gets turned off.
   //
-  // `incremental` is off on purpose: the project's own .tsbuildinfo is written
-  // by `tsc --noEmit` runs with a different `include`, and sharing it would let
-  // the two invalidate each other's cache.
+  // It runs at the END of a job, after the edits have already streamed, so it is
+  // the part of the wait the user actually sits through. Three things below buy
+  // that back — together, 1.7s to ~0.55s on the same tree, with byte-identical
+  // diagnostics:
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "incremental": false,
+
+    // 1. Skip re-checking files whose shape has not changed. The agent edits one
+    //    or two sections per job; without this every job re-checks all twenty.
+    "incremental": true,
+    // Its OWN cache file. The project's `tsc --noEmit` writes a .tsbuildinfo
+    // from a different `include`, and sharing one would let the two invalidate
+    // each other on every alternate run — which is why this used to be off.
+    "tsBuildInfoFile": "./node_modules/.cache/originEd/workspace.tsbuildinfo",
+
+    // 2. No ambient @types packages. Without this tsc auto-loads every
+    //    `@types/*` in node_modules — node, undici, chai, diff — 100 files of
+    //    globals for twenty client components that use none of them. React and
+    //    motion types are unaffected: those arrive through `import`, not here.
+    //
+    //    The trade: `process.env` in a section would now read as an error. In a
+    //    client component being edited by a visual tool, that is the right
+    //    answer anyway.
+    "types": [],
+
     "plugins": []
   },
-  "include": ["next-env.d.ts", "src/workspace/**/*.ts", "src/workspace/**/*.tsx"],
+
+  // 3. `next-env.d.ts` is deliberately NOT in this list. It is one line of
+  //    `/// <reference types="next" />`, and it drags in 345 of next's type
+  //    files plus the bundled TypeScript compiler's own — 593 files down to
+  //    110. It does not gate `import Image from "next/image"`: that resolves
+  //    through node_modules like any other import. What it provides is the
+  //    ambient declaration for STATIC image imports (`import logo from
+  //    "./logo.png"`), and the workspace addresses images by URL through
+  //    `asset()` instead.
+  "include": ["src/workspace/**/*.ts", "src/workspace/**/*.tsx"],
+
   // The agent's typecheck reports on the PAGE. Our own tests happen to live in
   // the jail (next to the manifest they assert about) and are none of its
   // business — a vitest import it cannot fix would be noise on every job.

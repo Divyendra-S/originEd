@@ -21,10 +21,6 @@ const ITEMS = [
     title: "Keep what works",
     body: "Every write is recorded before and after, so any turn can be reviewed as a diff — or undone.",
   },
-  {
-    title: "Ship when ready",
-    body: "Export clean Next.js and Tailwind code ready to deploy straight to production with zero lock-in.",
-  },
 ] as const;
 
 export default function Features() {

@@ -3,10 +3,14 @@
  * page in a state that does not compile.
  *
  * Scoped to `src/workspace/**` by `tsconfig.workspace.json` for two reasons. It
- * runs in ~2s instead of the whole project's ~8s, which is the difference
+ * runs in ~0.55s instead of the whole project's ~2.8s, which is the difference
  * between a gate that runs on every job and one that gets switched off; and it
  * reports only errors the agent can actually act on. An error in a file it
  * cannot edit is noise it will try to fix anyway.
+ *
+ * That 0.55s is the tail of the job the user actually waits through — the edits
+ * have already streamed by the time it starts — so the config is tuned for it
+ * rather than left at defaults. What buys what is written down there.
  *
  * Paths come back JAIL-RELATIVE — `sections/hero.tsx`, not
  * `src/workspace/sections/hero.tsx` — because that is the vocabulary every

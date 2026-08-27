@@ -457,7 +457,7 @@ burned 261 thought tokens. We send `thinkingLevel: "low"`, overridable with
 | `add_section` | `{ slug, label?, template?, after?, before? }` | one call, three files — see below | ✅ |
 | `remove_section` | `{ slug }` | un-wires, then deletes | ✅ |
 | `reorder_sections` | | **still dropped.** Re-ordering is one edit to one array in a file the model has already read; a tool would be a second way to write the same bytes. |
-| `typecheck` | `{}` | `tsc --noEmit` scoped to the jail by `tsconfig.workspace.json` (~2s, vs ~8s for the project) | ✅ |
+| `typecheck` | `{}` | `tsc --noEmit` scoped to the jail by `tsconfig.workspace.json` (~0.55s, vs ~2.8s for the project) | ✅ |
 
 
 ### The gate: the loop checks its own work
@@ -845,6 +845,18 @@ the viewport are.
 the thing being fixed: an entry that stacks unrelated designs one after another is not a
 view of anything. Every option in the menu renders a screen that exists.
 
+**The menu is hand-rolled, not a `<select>`.** It started as a native one over a styled
+face, on the argument that the platform already does focus and arrow keys for free. The
+part that is not free is the look: `<option>` takes almost no styling in any browser and
+the popup itself takes none at all, so the one control in the editor that opened a white,
+system-font, square-cornered list out of a near-black bar was the native one. So the
+keyboard contract is re-implemented on purpose — arrows wrap through the list
+(`menu.ts`, tested), Home/End jump, Enter and Space choose, Escape closes and hands focus
+back to the trigger, a click outside dismisses, and Tab out closes on the way. Focus
+moves onto the options themselves rather than being simulated with
+`aria-activedescendant`, so the browser's focus ring and the screen reader's
+announcement are the real ones.
+
 **Membership lives in `pages`, not as a fourth key on each section.** `add_section`
 writes `{ slug, label, file }` entry lines into `sections` (§7, `section.codegen.ts`) and
 knows nothing about grouping; a required fourth key would mean either teaching the
@@ -1007,6 +1019,15 @@ whatever happens to it afterwards. The popup is an offer, not a gate: **Enter se
 turn from there**, and dismissing it leaves the chips sitting in the composer to be
 written against instead. Routing that text into the composer for a second Enter, in a
 second box, would make one thought cost two submissions.
+
+**An open box takes the next click.** That click dismisses it and selects nothing, and
+until it arrives nothing highlights under the cursor. The first version let one click do
+both — close the box *and* pin whatever was underneath — which meant there was no way to
+put the box away without picking something up, and the page appeared to select at random
+as you clicked around it. A drag is unambiguous about its intent and is never swallowed:
+starting a marquee with a box open closes it and draws the marquee. Clicking a pin
+marker closes it too, since unpinning the thing the box is asking about would leave the
+question standing over nothing.
 
 **Exactly one thing is highlighted, and it is the thing a click would pin.** The section
 tints only when the pointer is over its own background — the moment there is something
