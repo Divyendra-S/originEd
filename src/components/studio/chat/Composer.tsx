@@ -72,15 +72,6 @@ export function Composer({
     if (focusToken > 0) ref.current?.focus();
   }, [focusToken]);
 
-  function submit() {
-    const trimmed = value.trim();
-    if (!trimmed || busy) return;
-    onSend(trimmed);
-    ref.current?.focus();
-  }
-
-  const canSend = value.trim().length > 0 && !busy;
-
   // The thread follows the pin. Unpinning the thing whose notes are open leaves
   // nothing to anchor the panel to, so it closes with it.
   const openPin = useMemo(
@@ -92,6 +83,23 @@ export function Composer({
     () => attachments.reduce((sum, p) => sum + (notes.counts.get(p.key) ?? 0), 0),
     [attachments, notes.counts],
   );
+
+  /**
+   * Notes ARE a message.
+   *
+   * Walking the page leaving a note on this heading and that card, then hitting
+   * send, is the workflow the popup's Comment button exists for — and it used to
+   * end at a greyed-out button with nothing to click and nothing said about why.
+   * No job was queued, so the studio simply sat there. An empty box with notes
+   * attached is not an empty message; the caller turns it into one.
+   */
+  const canSend = (value.trim().length > 0 || totalNotes > 0) && !busy;
+
+  function submit() {
+    if (!canSend) return;
+    onSend(value.trim());
+    ref.current?.focus();
+  }
 
   const summary =
     attachments.length === 0
@@ -151,7 +159,11 @@ export function Composer({
               submit();
             }
           }}
-          placeholder="Describe a change…"
+          // Notes already say what to do, so the box stops asking for a message
+          // it does not need — the send button is live either way.
+          placeholder={
+            totalNotes > 0 ? "Add to your notes, or press ↵ to send them" : "Describe a change…"
+          }
           className="oe-scroll max-h-52 w-full resize-none bg-transparent px-3 pt-3 pb-1 text-ui-md leading-relaxed text-oe-text placeholder:text-oe-faint focus:outline-none"
         />
 

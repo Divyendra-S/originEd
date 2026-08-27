@@ -9,7 +9,6 @@ import {
   addPins,
   downgradePins,
   isWholeSection,
-  keepPins,
   pinLabel,
   reconcilePins,
   removePin,
@@ -133,17 +132,6 @@ describe("addPins", () => {
 
   it("de-dupes within one drag", () => {
     expect(addPins([], [headline, headline, cta])).toEqual([headline, cta]);
-  });
-});
-
-describe("keepPins", () => {
-  it("keeps only the named keys", () => {
-    expect(keepPins([hero, headline, features], ["hero#0-1"])).toEqual([headline]);
-  });
-
-  it("returns the same array when it keeps everything", () => {
-    const current = [hero, headline];
-    expect(keepPins(current, ["hero", "hero#0-1"])).toBe(current);
   });
 });
 

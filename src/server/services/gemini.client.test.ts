@@ -7,7 +7,7 @@
  * `400 Function call is missing a thought_signature in functionCall parts`,
  * which kills the job on the turn AFTER the mistake. Verified live.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mergeParts, type Part } from "./gemini.client";
 
 describe("mergeParts", () => {
@@ -64,5 +64,74 @@ describe("mergeParts", () => {
 
   it("returns an empty array for an empty turn", () => {
     expect(mergeParts([])).toEqual([]);
+  });
+});
+
+/**
+ * The failure `fetch` has no answer for: the request connects, the endpoint says
+ * nothing, and the job hangs until somebody presses Stop. Measured on a real
+ * one — `status: running`, then 2m24s of silence — with the serial queue parked
+ * behind it, so the whole studio stops answering.
+ */
+describe("streamTurn gives up on a connection that goes quiet", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  /** A real fetch errors its body when the signal aborts; so does this one. */
+  function silentEndpoint() {
+    return vi.fn((_url: string, init: RequestInit) => {
+      const signal = init.signal!;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200 }));
+    });
+  }
+
+  it("fails with a GeminiError instead of hanging", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GEMINI_STALL_MS", "40");
+    vi.resetModules();
+    const { streamTurn, GeminiError } = await import("./gemini.client");
+    vi.stubGlobal("fetch", silentEndpoint());
+
+    const job = new AbortController();
+    const turn = streamTurn({
+      contents: [],
+      system: "",
+      tools: [],
+      signal: job.signal,
+      onText: () => {},
+    });
+
+    await expect(turn).rejects.toBeInstanceOf(GeminiError);
+    await expect(turn).rejects.toThrow("sent nothing for");
+    // The JOB's signal is untouched, which is what stops `agent.service` from
+    // normalising this into `Cancelled` and reporting a stall as "you stopped it".
+    expect(job.signal.aborted).toBe(false);
+  });
+
+  it("still lets the caller cancel", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GEMINI_STALL_MS", "10000");
+    vi.resetModules();
+    const { streamTurn } = await import("./gemini.client");
+    vi.stubGlobal("fetch", silentEndpoint());
+
+    const job = new AbortController();
+    const turn = streamTurn({
+      contents: [],
+      system: "",
+      tools: [],
+      signal: job.signal,
+      onText: () => {},
+    });
+    job.abort();
+    await expect(turn).rejects.toBeDefined();
   });
 });

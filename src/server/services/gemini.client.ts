@@ -128,6 +128,21 @@ export interface TurnInput {
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
 const MAX_ATTEMPTS = 3;
 
+/**
+ * How long the endpoint may go without sending a single byte before we give up.
+ *
+ * `fetch` has no timeout of its own, and a request that connects and then goes
+ * quiet is indistinguishable from a model that is thinking — so a stalled call
+ * used to hang the job forever. Measured on one: `status: running` at 22:19:10,
+ * then nothing, until the user pressed Stop 2m24s later. It also parks the
+ * serial queue behind it, so the studio stops answering entirely.
+ *
+ * Inactivity rather than a total budget: the clock restarts on every chunk, so a
+ * long answer that is actually arriving is never cut off, and a dead connection
+ * is caught in a minute and a half whatever the job's shape.
+ */
+const STALL_MS = Number(process.env.GEMINI_STALL_MS) || 90_000;
+
 async function post(input: TurnInput, attempt: number): Promise<Response> {
   const thinkingLevel = process.env.GEMINI_THINKING_LEVEL || "low";
 
@@ -172,40 +187,64 @@ async function post(input: TurnInput, attempt: number): Promise<Response> {
 
 /** One model turn, streamed. Returns once the model stops talking. */
 export async function streamTurn(input: TurnInput): Promise<TurnResult> {
-  const res = await post(input, 1);
-  if (!res.body) throw new GeminiError("gemini returned an empty body", res.status);
+  // Aborted with a GeminiError rather than the usual DOMException on purpose:
+  // `fetch` and `throwIfAborted` reject with the signal's REASON, and an
+  // AbortError here would be read as "the user pressed Stop" and reported as a
+  // cancelled job — the one outcome that says nothing went wrong.
+  const stalled = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const wind = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(
+      () => stalled.abort(new GeminiError(`gemini sent nothing for ${STALL_MS / 1000}s`, 0)),
+      STALL_MS,
+    );
+  };
 
-  const collected: Part[] = [];
-  const usage: Usage = { promptTokenCount: 0, candidatesTokenCount: 0 };
-  let finishReason: string | null = null;
-  let text = "";
+  // The caller's signal still cancels; this one only adds a deadline to it.
+  const signal = AbortSignal.any([input.signal, stalled.signal]);
 
-  for await (const chunk of streamJson<StreamChunk>(res.body, input.signal)) {
-    const candidate = chunk.candidates?.[0];
-    if (chunk.usageMetadata) {
-      usage.promptTokenCount = chunk.usageMetadata.promptTokenCount ?? usage.promptTokenCount;
-      usage.candidatesTokenCount =
-        chunk.usageMetadata.candidatesTokenCount ?? usage.candidatesTokenCount;
-    }
-    if (candidate?.finishReason) finishReason = candidate.finishReason;
+  try {
+    wind();
+    const res = await post({ ...input, signal }, 1);
+    if (!res.body) throw new GeminiError("gemini returned an empty body", res.status);
 
-    for (const part of candidate?.content?.parts ?? []) {
-      collected.push(part);
-      // Publish the fragment before anything else touches it — this is the
-      // token path, and everything downstream of it is allowed to be slower.
-      if (part.text && !part.thought) {
-        text += part.text;
-        await input.onText(part.text);
+    const collected: Part[] = [];
+    const usage: Usage = { promptTokenCount: 0, candidatesTokenCount: 0 };
+    let finishReason: string | null = null;
+    let text = "";
+
+    for await (const chunk of streamJson<StreamChunk>(res.body, signal)) {
+      // It is still talking, so the clock starts again.
+      wind();
+      const candidate = chunk.candidates?.[0];
+      if (chunk.usageMetadata) {
+        usage.promptTokenCount = chunk.usageMetadata.promptTokenCount ?? usage.promptTokenCount;
+        usage.candidatesTokenCount =
+          chunk.usageMetadata.candidatesTokenCount ?? usage.candidatesTokenCount;
+      }
+      if (candidate?.finishReason) finishReason = candidate.finishReason;
+
+      for (const part of candidate?.content?.parts ?? []) {
+        collected.push(part);
+        // Publish the fragment before anything else touches it — this is the
+        // token path, and everything downstream of it is allowed to be slower.
+        if (part.text && !part.thought) {
+          text += part.text;
+          await input.onText(part.text);
+        }
       }
     }
-  }
 
-  const parts = mergeParts(collected);
-  return {
-    parts,
-    calls: parts.flatMap((p) => (p.functionCall ? [p.functionCall] : [])),
-    text,
-    usage,
-    finishReason,
-  };
+    const parts = mergeParts(collected);
+    return {
+      parts,
+      calls: parts.flatMap((p) => (p.functionCall ? [p.functionCall] : [])),
+      text,
+      usage,
+      finishReason,
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

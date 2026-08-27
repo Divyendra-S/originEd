@@ -110,18 +110,6 @@ export function downgradePins(current: readonly Pinned[], keys: readonly string[
 }
 
 /**
- * Keep only these pins.
- *
- * What `send` uses: the turn retires the pins it consumed, except the ones still
- * carrying open notes, which have not been answered yet (§11).
- */
-export function keepPins(current: readonly Pinned[], keys: readonly string[]): Pinned[] {
-  const keep = new Set(keys);
-  const kept = current.filter((p) => keep.has(p.key));
-  return kept.length === current.length ? (current as Pinned[]) : kept;
-}
-
-/**
  * Pin these without unpinning anything.
  *
  * Not `togglePin` in a loop: this is used to bring back sections that already
@@ -165,7 +153,8 @@ export interface Pins {
   pick: (targets: readonly Pinned[]) => void;
   remove: (key: string) => void;
   add: (targets: readonly Pinned[]) => void;
-  keep: (keys: readonly string[]) => void;
+  /** Unpin everything. What SEND does: the turn consumed the whole set (§11). */
+  clear: () => void;
   reconcile: (known: readonly SectionInfo[]) => void;
   downgrade: (keys: readonly string[]) => void;
 }
@@ -181,7 +170,7 @@ export function usePins(): Pins {
     pick: useCallback((targets: readonly Pinned[]) => setPinned((c) => addPins(c, targets)), []),
     remove: useCallback((key: string) => setPinned((c) => removePin(c, key)), []),
     add: useCallback((targets: readonly Pinned[]) => setPinned((c) => addPins(c, targets)), []),
-    keep: useCallback((keys: readonly string[]) => setPinned((c) => keepPins(c, keys)), []),
+    clear: useCallback(() => setPinned((c) => (c.length === 0 ? c : [])), []),
     reconcile: useCallback(
       (known: readonly SectionInfo[]) => setPinned((c) => reconcilePins(c, known)),
       [],

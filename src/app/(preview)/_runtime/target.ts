@@ -77,6 +77,26 @@ function contentChildren(el: Element): Element[] {
 }
 
 /**
+ * Text-level tags that wrap part of a word rather than a thing of their own.
+ *
+ * This list is the difference between a headline and a ransom note. The hero's
+ * `RollingLetters` renders ONE `<span>` PER CHARACTER so it can stagger them in,
+ * and a separator at every element boundary turned that `<h1>` into
+ * `"S t a y  a h e a d  o f  t h e"` — which went onto the chip, into the note's
+ * `target_label`, and into the prompt under "find this text in the source", where
+ * it matches nothing. Anything animated per letter or per word does this.
+ *
+ * Narrow on purpose. `<a>` and `<button>` are inline too, but two adjacent links
+ * are two things, so they keep their boundary; these tags are always part of the
+ * run of text around them.
+ */
+const INLINE = new Set([
+  "span", "b", "i", "em", "strong", "u", "s", "small", "sub", "sup", "mark",
+  "code", "var", "samp", "kbd", "abbr", "cite", "dfn", "q", "time", "data",
+  "bdi", "bdo", "ruby", "rt", "rp", "wbr", "del", "ins", "svg", "font",
+]);
+
+/**
  * The element's own text, with the inspector's chrome left out.
  *
  * Named for what it actually does. It is not "visible" text — nothing here knows
@@ -90,14 +110,23 @@ export function contentText(el: Element): string {
       return;
     }
     if (node.nodeType !== 1) return;
-    if (isChrome(node as Element)) return;
-    // A space at every element boundary, then collapse. Without it a card reads
-    // as "01Point at itSwitch the preview" — a string that matches nothing in
-    // the source and tells the model nothing. Leaf elements, which is what a pin
-    // usually lands on, are unaffected: they hold a single text node.
-    out += " ";
-    node.childNodes.forEach(walk);
-    out += " ";
+    const child = node as Element;
+    if (isChrome(child)) return;
+    const tag = tagOf(child);
+    // A line break is a word boundary wherever it appears, and `RollingLetters`
+    // emits one for every `\n` in the copy.
+    if (tag === "br") {
+      out += " ";
+      return;
+    }
+    // A space at every BLOCK boundary, then collapse. Without it a card reads as
+    // "01Point at itSwitch the preview" — a string that matches nothing in the
+    // source and tells the model nothing. Inline wrappers get no separator, for
+    // the mirror-image reason: see INLINE.
+    const separate = !INLINE.has(tag);
+    if (separate) out += " ";
+    child.childNodes.forEach(walk);
+    if (separate) out += " ";
   };
   walk(el);
   return out.replace(/\s+/g, " ").trim();

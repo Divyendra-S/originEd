@@ -5,7 +5,13 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Comment, ElementRef, SectionInfo } from "@/lib/types";
-import { bucketNotes, countByTarget, noteTargetFor, targetsWithNotes } from "./useComments";
+import {
+  bucketNotes,
+  countByTarget,
+  messageForNotes,
+  noteTargetFor,
+  targetsWithNotes,
+} from "./useComments";
 
 const ref = (over: Partial<ElementRef> = {}): ElementRef => ({
   sectionSlug: "hero",
@@ -154,5 +160,20 @@ describe("noteTargetFor", () => {
     expect(target?.label).toBe("Headline");
     expect(target?.ref).not.toHaveProperty("attrs");
     expect(target?.ref.path).toEqual([0, 1]);
+  });
+});
+
+describe("messageForNotes", () => {
+  it("turns an empty composer with notes on it into a real request", () => {
+    // The bug this closes: notes on the chips, nothing typed, send disabled —
+    // so no job was ever queued and the studio looked like it had ignored you.
+    expect(messageForNotes(1)).toContain("note");
+    expect(messageForNotes(4)).toContain("all of them");
+  });
+
+  it("says nothing when there are no notes", () => {
+    // What keeps a genuinely empty composer a no-op rather than a turn about
+    // nothing.
+    expect(messageForNotes(0)).toBe("");
   });
 });

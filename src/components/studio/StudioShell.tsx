@@ -21,6 +21,7 @@ import {
   COMMENTS_KEY,
   bucketNotes,
   countByTarget,
+  messageForNotes,
   noteTargetFor,
   targetsWithNotes,
   useAddComment,
@@ -150,6 +151,16 @@ export function StudioShell() {
 
   const splitRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
+  /**
+   * The note-carrying pins the turn in flight took with it.
+   *
+   * Send clears the whole set — the chips and the markers go, because they were
+   * consumed. But a run that fails or is cancelled answered nothing, and the
+   * notes it carried are still open in Postgres with no chip left to show them
+   * on. Those come back on `done`. Notes are the one thing in the studio that
+   * must never go quiet (§11).
+   */
+  const carried = useRef<Pinned[]>([]);
 
   const transcript = useChat(chatId);
   const sendMessage = useSendMessage();
@@ -204,6 +215,13 @@ export function StudioShell() {
       // rather than guess: a failed one closes nothing, and the badges have to
       // tell those two apart.
       void queryClient.invalidateQueries({ queryKey: COMMENTS_KEY });
+      // ...and a failed one leaves them open with nothing pinned to show them
+      // on, because send cleared the set. Put those chips back; the rest of what
+      // the turn consumed stays gone either way.
+      if (event.status !== "succeeded" && carried.current.length > 0) {
+        pins.add(carried.current);
+      }
+      carried.current = [];
       // The typecheck gate (§7) catches what does not compile. This catches what
       // compiles and then throws — ask the preview whether it still renders.
       if (event.filesChanged > 0) probe();
@@ -252,7 +270,7 @@ export function StudioShell() {
 
   // ── §11: the page and the composer are two views of one pin set ──────────
   const { onPick, onComment, onPinClick, onUnresolved, setPins, setMode } = preview;
-  const { pinned, toggle, pick, remove, add: addPins, keep: keepPins, reconcile, downgrade } = pins;
+  const { pinned, toggle, pick, remove, add: addPins, clear: clearPins, reconcile, downgrade } = pins;
 
   /** Everything open on this section — element notes included. What SEND ships. */
   const notesForSection = useCallback(
@@ -294,15 +312,30 @@ export function StudioShell() {
   const send = useCallback(
     (text: string, override?: readonly Pinned[]) => {
       const sending = override ? [...override] : pinned;
-      setPendingUser({ text, attachments: groupForBubble(sending, notesForSection), serverId: null });
+      const withNotes = sending.filter((p) => (noteCounts.get(p.key) ?? 0) > 0);
+      const notes = withNotes.reduce((sum, p) => sum + (noteCounts.get(p.key) ?? 0), 0);
+      // An empty box with notes on the chips is not an empty message — see
+      // `messageForNotes`. Nothing at all still sends nothing.
+      const message = text.trim() || messageForNotes(notes);
+      if (!message) return;
+
+      setPendingUser({
+        text: message,
+        attachments: groupForBubble(sending, notesForSection),
+        serverId: null,
+      });
       if (!override) setDraft("");
-      // The turn retires the pins it consumed — except the ones carrying notes,
-      // which stay until the job that answers them says so. A failed run would
-      // otherwise strand the notes: still open in Postgres, attached to nothing.
-      keepPins(sending.filter((p) => (noteCounts.get(p.key) ?? 0) > 0).map((p) => p.key));
+      // The turn consumed the whole set, so the whole set goes — chips out of the
+      // composer, markers off the page. Leaving the note-carrying ones behind
+      // meant they rode along on the NEXT message too, which is how a turn about
+      // the hero arrived with three sections and yesterday's notes attached.
+      // `carried` is what brings them back if the job does not succeed.
+      carried.current = withNotes;
+      clearPins();
+      setOpenNotes(null);
 
       sendMessage.mutate(
-        { chatId, text, attachments: sending.map(toWire) },
+        { chatId, text: message, attachments: sending.map(toWire) },
         {
           onSuccess: (data) => {
             setChatId(data.chatId);
@@ -311,11 +344,17 @@ export function StudioShell() {
             // cancel each other out of the transcript.
             setPendingUser((current) => (current ? { ...current, serverId: data.messageId } : current));
           },
-          onError: () => setPendingUser(null),
+          onError: () => {
+            setPendingUser(null);
+            // Nothing was queued, so nothing was consumed. Put the selection
+            // back rather than making the user re-pick it to try again.
+            addPins(sending);
+            carried.current = [];
+          },
         },
       );
     },
-    [pinned, keepPins, noteCounts, notesForSection, chatId, sendMessage],
+    [pinned, clearPins, addPins, noteCounts, notesForSection, chatId, sendMessage],
   );
 
   /**

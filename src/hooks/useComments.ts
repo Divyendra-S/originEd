@@ -76,6 +76,28 @@ export function countByTarget(buckets: ReadonlyMap<string, Comment[]>): Map<stri
 }
 
 /**
+ * What an empty composer means when the chips are carrying notes.
+ *
+ * Walking the page leaving a note on this heading and that card, then pressing
+ * send, is the whole point of the popup's Comment button — and it used to end at
+ * a disabled button: no job queued, no answer, nothing said about why. The notes
+ * ARE the request. They were written on the page, one per thing they are about,
+ * and `snapshot` ships every one of them inside its section's block; the message
+ * only has to point at them.
+ *
+ * Spelled out rather than sent as an empty string because the model needs an
+ * instruction and the transcript needs a bubble that reads like something a
+ * person said. Empty for zero notes, which is what keeps a genuinely empty
+ * composer a no-op.
+ */
+export function messageForNotes(count: number): string {
+  if (count <= 0) return "";
+  return count === 1
+    ? "Make the change I left as a note on the page."
+    : "Make the changes I left as notes on the page — all of them, in this turn.";
+}
+
+/**
  * Everything carrying open notes, as pin-set entries.
  *
  * An element note brings back the ELEMENT — `target_ref` holds enough to re-pin

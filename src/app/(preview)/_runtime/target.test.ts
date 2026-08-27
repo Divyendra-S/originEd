@@ -138,6 +138,47 @@ describe("tool chrome never contaminates a ref", () => {
   });
 });
 
+describe("contentText reads a headline the way a person does", () => {
+  /**
+   * The shape `RollingLetters` renders: one `<span>` per character so each can be
+   * staggered in, with a `<br>` for the newline in the copy. A separator at every
+   * element boundary turned this into "S t a y a h e a d o f t h e" — which is
+   * what went on the chip, into the note's `target_label` and into the prompt
+   * telling the model to find that text in the source, where it matches nothing.
+   */
+  const rolling = (copy: string) =>
+    [...copy]
+      .map((c) => (c === "\n" ? "<br>" : `<span aria-hidden="true"><span>${c}</span></span>`))
+      .join("");
+
+  beforeEach(() => {
+    document.body.innerHTML = `
+<div data-section-slug="hero" data-section-label="Hero" data-section-file="sections/hero.tsx">
+  <section><main>
+    <h1 aria-label="Stay ahead of the (bezier) curve">${rolling("Stay ahead of the\n(bezier) curve")}</h1>
+  </main></section>
+</div>`;
+  });
+
+  it("does not put a space between every letter", () => {
+    expect(contentText(one("h1"))).toBe("Stay ahead of the (bezier) curve");
+  });
+
+  it("gives the model text that is actually in the source", () => {
+    const b = boundary("hero");
+    const ref = refFor(b, one("h1"));
+    expect(ref.text).toBe("Stay ahead of the (bezier) curve");
+    expect(ref.label).toBe("Stay ahead of the (bezi…");
+  });
+
+  it("still finds the element again by signature after the path breaks", () => {
+    const b = boundary("hero");
+    const ref = refFor(b, one("h1"));
+    b.querySelector("main")!.prepend(document.createElement("div"));
+    expect(resolveRef(b, ref)?.el).toBe(one("h1"));
+  });
+});
+
 describe("resolveRef degrades in the right order", () => {
   it("falls back to the signature when the path breaks", () => {
     const b = boundary("hero");
