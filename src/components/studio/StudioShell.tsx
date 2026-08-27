@@ -19,7 +19,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useChat, useSendMessage } from "@/hooks/useChat";
 import {
   COMMENTS_KEY,
-  countBySection,
+  bucketNotes,
+  countByTarget,
+  noteTargetFor,
   targetsWithNotes,
   useAddComment,
   useComments,
@@ -74,7 +76,11 @@ function toWire(pin: Pinned): Attachment {
  * groupings between the optimistic turn and the persisted one would make the
  * chips visibly rearrange the instant the row lands.
  */
-function groupForBubble(pins: readonly Pinned[], notesFor: (slug: string) => Comment[]): TurnAttachment[] {
+function groupForBubble(
+  pins: readonly Pinned[],
+  /** Every open note on the section, element notes included — `snapshot`'s rule. */
+  notesFor: (slug: string) => Comment[],
+): TurnAttachment[] {
   const bySection = new Map<string, TurnAttachment>();
   for (const pin of pins) {
     let entry = bySection.get(pin.sectionSlug);
@@ -87,6 +93,7 @@ function groupForBubble(pins: readonly Pinned[], notesFor: (slug: string) => Com
           id: c.id,
           body: c.body,
           status: c.status,
+          ...(c.targetLabel ? { label: c.targetLabel } : {}),
         })),
         targets: [],
       };
@@ -128,7 +135,7 @@ export function StudioShell() {
 
   const [chatId, setChatId] = useState<string | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  /** The section whose notes are expanded in the composer, if any (§11). */
+  /** The PIN whose notes are expanded in the composer, if any — section or element (§11). */
   const [openNotes, setOpenNotes] = useState<string | null>(null);
   const [pendingUser, setPendingUser] = useState<PendingUser | null>(null);
   const [viewport, setViewport] = useState<ViewportId>("desktop");
@@ -153,9 +160,27 @@ export function StudioShell() {
   const resolveComment = useResolveComment();
 
   const openComments = useMemo(() => comments.data ?? [], [comments.data]);
-  // Keyed by section slug — which IS the pin key for a whole-section pin. Notes
-  // are anchored to sections, so an element pin's badge is legitimately empty.
-  const noteCounts = useMemo(() => countBySection(openComments), [openComments]);
+
+  /**
+   * Which chip each open note shows on, and how many each chip has.
+   *
+   * Keyed on the PIN, not on the section: a note left on the hero's headline
+   * belongs to the headline's chip while that headline is pinned, and falls back
+   * to the Hero chip when it is not — which is what happens after the agent
+   * rewrites the section out from under it (`downgradePins`). `bucketNotes` owns
+   * that rule and is tested on its own.
+   *
+   * This deliberately disagrees with what SEND ships, which buckets strictly by
+   * section (`notesForSection` below, matching `section.service.snapshot`). The
+   * badge answers "what is on this chip"; the snapshot answers "what does the
+   * model need to know about this file".
+   */
+  const pinnedKeys = useMemo(() => new Set(pins.pinned.map((p) => p.key)), [pins.pinned]);
+  const noteBuckets = useMemo(
+    () => bucketNotes(openComments, pinnedKeys),
+    [openComments, pinnedKeys],
+  );
+  const noteCounts = useMemo(() => countByTarget(noteBuckets), [noteBuckets]);
 
   const { flash, probe, setPage } = preview;
   const stream = useJobStream(activeJobId, {
@@ -226,12 +251,31 @@ export function StudioShell() {
   // effect — and double-click-to-reset covers the case persistence was for.
 
   // ── §11: the page and the composer are two views of one pin set ──────────
-  const { onPick, onPinClick, onUnresolved, setPins, setMode } = preview;
+  const { onPick, onComment, onPinClick, onUnresolved, setPins, setMode } = preview;
   const { pinned, toggle, pick, remove, add: addPins, keep: keepPins, reconcile, downgrade } = pins;
 
-  const notesFor = useCallback(
+  /** Everything open on this section — element notes included. What SEND ships. */
+  const notesForSection = useCallback(
     (slug: string) => openComments.filter((c) => c.sectionSlug === slug),
     [openComments],
+  );
+
+  /** What the chip's badge counts and its thread shows. */
+  const notesForPin = useCallback((key: string) => noteBuckets.get(key) ?? [], [noteBuckets]);
+
+  /**
+   * Write a note against one pinned thing.
+   *
+   * One function for both doors — the thread in the composer and the popup on
+   * the page — so an element note is the same row however it was made.
+   * `noteTargetFor` returns undefined for a whole-section pin, which is what
+   * keeps `target_key` null for exactly the notes that were always section-wide.
+   */
+  const { mutate: writeNote } = addComment;
+  const addNote = useCallback(
+    (pin: Pinned, body: string) =>
+      writeNote({ sectionSlug: pin.sectionSlug, body, target: noteTargetFor(pin) }),
+    [writeNote],
   );
 
   /**
@@ -250,7 +294,7 @@ export function StudioShell() {
   const send = useCallback(
     (text: string, override?: readonly Pinned[]) => {
       const sending = override ? [...override] : pinned;
-      setPendingUser({ text, attachments: groupForBubble(sending, notesFor), serverId: null });
+      setPendingUser({ text, attachments: groupForBubble(sending, notesForSection), serverId: null });
       if (!override) setDraft("");
       // The turn retires the pins it consumed — except the ones carrying notes,
       // which stay until the job that answers them says so. A failed run would
@@ -271,7 +315,7 @@ export function StudioShell() {
         },
       );
     },
-    [pinned, keepPins, noteCounts, notesFor, chatId, sendMessage],
+    [pinned, keepPins, noteCounts, notesForSection, chatId, sendMessage],
   );
 
   /**
@@ -315,6 +359,24 @@ export function StudioShell() {
       pick(targets);
     });
   }, [onPick, pinned, toggle, pick, send, busy]);
+
+  /**
+   * The popup's other button: leave these targets a note and stay on the page.
+   *
+   * No busy-guard, unlike `onPick`'s send path. A note is durable and belongs to
+   * nothing in flight — writing one while the agent works is exactly what the
+   * NEXT turn is for, and parking it in the composer instead would turn a
+   * durable note into a line of draft text.
+   *
+   * One note per target. A drag that enclosed three cards and one sentence about
+   * them means the sentence is about all three; filing it under the first would
+   * be a worse reading of that gesture than repeating it.
+   */
+  useEffect(() => {
+    onComment((targets, body) => {
+      for (const target of targets) addNote(target, body);
+    });
+  }, [onComment, addNote]);
 
   // Clicking the pin marker ON the page. A marker carrying notes opens them —
   // the badge is the only place they are visible from the preview, so making it
@@ -466,17 +528,18 @@ export function StudioShell() {
     clearBuildError();
   }, [buildError, send, clearBuildError, stream.files]);
 
+  const { mutate: closeNote } = resolveComment;
   const notes = useMemo<ComposerNotes>(
     () => ({
       counts: noteCounts,
-      openSlug: openNotes,
-      setOpenSlug: setOpenNotes,
-      forSection: notesFor,
-      add: (sectionSlug, body) => addComment.mutate({ sectionSlug, body }),
-      resolve: (id) => resolveComment.mutate(id),
+      openKey: openNotes,
+      setOpenKey: setOpenNotes,
+      forPin: notesForPin,
+      add: addNote,
+      resolve: closeNote,
       busy: addComment.isPending,
     }),
-    [noteCounts, openNotes, notesFor, addComment, resolveComment],
+    [noteCounts, openNotes, notesForPin, addNote, closeNote, addComment.isPending],
   );
 
   /** The tool the agent is inside right now. Everything else is model time. */

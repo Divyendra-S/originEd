@@ -15,6 +15,14 @@
  * an offer, not a gate: type and press Enter to send the turn from here, or
  * ignore it and write in the composer against the chips already waiting there.
  *
+ * The box takes two answers, and the second is the reason it is worth opening
+ * twice. ENTER sends one turn about this one thing. CMD-ENTER leaves a COMMENT
+ * on it instead — durable, listed on the chip in the composer, and still there
+ * after a reload — so you can walk the page annotating a heading here and a
+ * button there, then write one message that arrives with all of them attached.
+ * That is the difference between one change per trip to the composer and a
+ * round of changes described where they actually are.
+ *
  * While a box is open it takes the next CLICK. That click closes it and selects
  * nothing, and until it comes nothing highlights under the cursor — because a
  * click that both dismissed the box and pinned whatever was underneath meant
@@ -54,6 +62,13 @@ const STUDIO_ORIGIN = typeof window === "undefined" ? "" : window.location.origi
 
 /** A section this much inside the box was clearly the thing being enclosed. */
 const WHOLE_SECTION = 0.85;
+
+/**
+ * Mirrors `comment.service.MAX_BODY`. Sliced here rather than left to the
+ * server, which REJECTS an over-long body rather than truncating it — losing a
+ * comment to a 400 the user cannot see is the worst outcome available.
+ */
+const MAX_COMMENT = 500;
 
 function post(message: PreviewToStudio) {
   if (window.parent === window) return; // opened directly, not embedded
@@ -121,6 +136,12 @@ interface Popup {
   gesture: PickGesture;
 }
 
+/** Which key the shortcut hint names. The popup never server-renders. */
+const MOD =
+  typeof navigator !== "undefined" && /Mac|iP(hone|ad|od)/.test(navigator.userAgent)
+    ? "\u2318"
+    : "ctrl";
+
 /** A click has no rectangle. Anchor the popup to the pixel it happened on. */
 function pointBox(x: number, y: number): Box {
   return { left: x, top: y, right: x, bottom: y };
@@ -174,6 +195,27 @@ export function Inspector() {
       if (targets.length > 0) {
         post({ source: "preview", type: "pick", targets, note: text, gesture });
       }
+      closePopup();
+    },
+    [closePopup],
+  );
+
+  /**
+   * Write this down against these targets instead of sending it.
+   *
+   * No gesture and no toggle: by the time a box is open its targets are already
+   * pinned, so this is purely "say something about them". The box closes on the
+   * way out because the point of leaving a comment rather than sending one is
+   * that you are going somewhere else on the page next.
+   *
+   * A drag's whole selection gets the same comment, one each. The user drew a
+   * rectangle around three cards and said one thing about them; filing it under
+   * only the first would be a worse reading of that gesture than repeating it.
+   */
+  const leaveComment = useCallback(
+    (targets: PickedTarget[], text: string) => {
+      const body = text.trim().slice(0, MAX_COMMENT);
+      if (body) post({ source: "preview", type: "comment", targets, body });
       closePopup();
     },
     [closePopup],
@@ -485,23 +527,45 @@ export function Inspector() {
               onChange={(e) => setNote(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation();
-                // Enter SENDS. The targets are already pinned, so an empty box
-                // has nothing left to hand over — just get the popup out of the
-                // way rather than posting an empty turn.
+                // Enter SENDS; the modifier COMMENTS. The targets are already
+                // pinned either way, so an empty box has nothing to hand over —
+                // just get the popup out of the way rather than posting nothing.
                 if (e.key === "Enter") {
                   const text = note.trim();
-                  if (text) commit(popup.targets, text, popup.gesture);
-                  else closePopup();
+                  if (!text) closePopup();
+                  else if (e.metaKey || e.ctrlKey) leaveComment(popup.targets, text);
+                  else commit(popup.targets, text, popup.gesture);
                 }
                 if (e.key === "Escape") closePopup();
               }}
             />
 
-            <div className="oe-popup-foot">
-              <kbd className="oe-kbd">↵</kbd>
-              <span>send</span>
-              <kbd className="oe-kbd">esc</kbd>
-              <span>keep pinned</span>
+            {/* Both actions are spelled out rather than left to the shortcuts.
+                Nobody guesses a second verb on a box that has only ever had
+                one, and the whole point of the comment is that you use it
+                repeatedly — an affordance found once is worth twenty trips. */}
+            <div className="oe-popup-actions">
+              <span className="oe-popup-hint">esc keeps it pinned</span>
+              <button
+                type="button"
+                className="oe-popup-btn"
+                disabled={note.trim().length === 0}
+                onClick={() => leaveComment(popup.targets, note)}
+                title="Save this on the element and keep going — it rides along with your next message"
+              >
+                Comment
+                <kbd className="oe-kbd">{MOD}↵</kbd>
+              </button>
+              <button
+                type="button"
+                className="oe-popup-btn oe-popup-btn--send"
+                disabled={note.trim().length === 0}
+                onClick={() => commit(popup.targets, note.trim(), popup.gesture)}
+                title="Send this as a message now"
+              >
+                Send
+                <kbd className="oe-kbd">↵</kbd>
+              </button>
             </div>
           </motion.div>
         )}

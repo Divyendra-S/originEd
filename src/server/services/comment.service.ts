@@ -1,11 +1,16 @@
 /**
- * Notes left on a section (§11).
+ * Notes left on the page (§11).
  *
- * A note is the spatial half of the headline feature. Pinning says "this
- * section is what I'm talking about"; a note says WHAT about it — and because
- * it is anchored to a slug rather than typed into the chat, the model receives
- * it inside that section's `<attached-section>` block instead of in a paragraph
+ * A note is the spatial half of the headline feature. Pinning says "this is
+ * what I'm talking about"; a note says WHAT about it — and because it is
+ * anchored to the thing rather than typed into the chat, the model receives it
+ * inside that section's `<attached-section>` block instead of in a paragraph
  * that names three sections at once.
+ *
+ * A note anchors to a SECTION or to one element inside it. The element form is
+ * the finer one, and `section_slug` is populated for both: the section is the
+ * orphan anchor, so an element the agent rewrites away costs the note its
+ * "which element" label and nothing more.
  *
  * Notes are durable (Postgres) while pins are session state, which is the whole
  * reason this table exists: you can close the tab mid-thought and the notes are
@@ -31,12 +36,30 @@ export async function list(): Promise<Comment[]> {
   return open.filter((c) => live.has(c.sectionSlug));
 }
 
+export interface AddInput {
+  sectionSlug: string;
+  body: string;
+  /** The element the note is on. Absent means the whole section. */
+  target?: { key: string; ref: commentRepo.StoredRef; label: string };
+}
+
 /** Null when the slug is not a section — a 404, not a 500. */
-export async function add(input: { sectionSlug: string; body: string }): Promise<Comment | null> {
+export async function add(input: AddInput): Promise<Comment | null> {
   const body = input.body.trim();
   if (!body) throw new Error("note is empty");
   if (!sectionService.bySlug(input.sectionSlug)) return null;
-  return commentRepo.create({ sectionSlug: input.sectionSlug, body: body.slice(0, MAX_BODY) });
+
+  // A target with an empty path IS the whole section — `refKey` of it is the
+  // bare slug (§11). Storing it as a target would break the one invariant the
+  // column rests on, `target_key IS NULL` ⇔ a section note, and would put a
+  // redundant "on Hero:" in front of a note that is already on Hero.
+  const target = input.target && input.target.ref.path.length > 0 ? input.target : undefined;
+
+  return commentRepo.create({
+    sectionSlug: input.sectionSlug,
+    body: body.slice(0, MAX_BODY),
+    ...(target ? { target } : {}),
+  });
 }
 
 export async function resolve(id: string): Promise<void> {

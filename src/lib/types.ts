@@ -22,8 +22,14 @@ export interface AttachedSection {
    * Notes that were open on this section at send time (§11). Frozen with the
    * source, and carrying `id` so the job can resolve exactly these on success —
    * not whatever is open by the time it finishes.
+   *
+   * EVERY open note on the section, including ones left on elements inside it,
+   * each carrying the element's `label`. That deliberately disagrees with the
+   * chip badge, which is exact-key: a note must not be orphaned by how the user
+   * happened to pin the section it is on. `label` is absent on a whole-section
+   * note, which is what keeps an old row rendering byte-identically.
    */
-  comments: { id: string; body: string; status: CommentStatus }[];
+  comments: { id: string; body: string; status: CommentStatus; label?: string }[];
   /**
    * The elements inside this section the user actually pointed at (§11).
    *
@@ -87,6 +93,23 @@ export interface Comment {
   jobId: string | null;
   createdAt: string;
   resolvedAt: string | null;
+  /**
+   * The element this note is on, when it is on one rather than on the whole
+   * section (§11).
+   *
+   * `targetKey === null` IS the whole-section note — which is what every note
+   * written before elements were commentable already was, so the columns went
+   * on nullable and nothing was backfilled.
+   *
+   * `sectionSlug` stays populated either way and stays the orphan anchor: the
+   * note survives the agent rewriting its element away, exactly as the pin does
+   * (`downgradePins`), instead of pointing at nothing.
+   */
+  targetKey: string | null;
+  /** Enough to re-pin the element on a later visit. Null for a section note. */
+  targetRef: ElementRef | null;
+  /** "Headline" — denormalised so the chip and the thread never parse jsonb. */
+  targetLabel: string | null;
 }
 
 // ── the SSE event union (§8) ──────────────────────────────────────────────────
@@ -274,6 +297,17 @@ export type PreviewToStudio =
       note: string | null;
       gesture: PickGesture;
     }
+  /**
+   * The popup's other button: leave these targets a NOTE instead of sending.
+   *
+   * Separate from `pick` rather than another mode of its `note` field, because
+   * by the time a popup is open its targets are already pinned — the pick was
+   * posted when the pointer came up. So this carries no gesture and toggles
+   * nothing; it is purely "write this down against these things", which is what
+   * lets the user go around the page annotating several portions and then send
+   * one message with all of it attached.
+   */
+  | { source: "preview"; type: "comment"; targets: PickedTarget[]; body: string }
   | { source: "preview"; type: "pin_click"; key: string }
   /** Pins whose element no longer exists — the studio downgrades them (§11). */
   | { source: "preview"; type: "pin_unresolved"; keys: string[] }

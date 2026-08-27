@@ -41,6 +41,9 @@ function comment(sectionSlug: string, body: string, id = `c-${body}`): Comment {
     jobId: null,
     createdAt: "2026-01-01T00:00:00Z",
     resolvedAt: null,
+    targetKey: null,
+    targetRef: null,
+    targetLabel: null,
   };
 }
 
@@ -53,6 +56,17 @@ const attached = (sectionSlug: string, comments: AttachedSection["comments"]): A
 });
 
 const context = (attachments: AttachedSection[]): Job["context"] => ({ attachments });
+
+/** What the studio sends for an element. No `attrs` — it is preview-side only. */
+const headlineRef = {
+  sectionSlug: "hero",
+  path: [0, 1],
+  tag: "h1",
+  text: "Stay ahead",
+  nth: 0,
+  trail: "section > div > h1",
+  label: "Headline",
+};
 
 beforeEach(() => {
   notes.open = [];
@@ -99,6 +113,29 @@ describe("add", () => {
     await add({ sectionSlug: "hero", body: "x".repeat(MAX_BODY + 50) });
     const written = vi.mocked(commentRepo.create).mock.calls[0][0].body;
     expect(written).toHaveLength(MAX_BODY);
+  });
+
+  it("carries the element through when the note is on one", async () => {
+    const target = { key: "hero#0-1", label: "Headline", ref: headlineRef };
+    await add({ sectionSlug: "hero", body: "too big", target });
+    expect(commentRepo.create).toHaveBeenCalledWith({
+      sectionSlug: "hero",
+      body: "too big",
+      target,
+    });
+  });
+
+  it("drops a target whose path is empty — that IS the whole section", async () => {
+    // `refKey` of a whole-section ref is the bare slug, so storing it as a
+    // target would break the one invariant the column rests on (`target_key IS
+    // NULL` ⇔ a section note) and put a redundant "on Hero:" in front of a note
+    // that is already filed under Hero.
+    await add({
+      sectionSlug: "hero",
+      body: "too tall",
+      target: { key: "hero", label: "Hero", ref: { ...headlineRef, path: [], tag: "", text: "" } },
+    });
+    expect(commentRepo.create).toHaveBeenCalledWith({ sectionSlug: "hero", body: "too tall" });
   });
 });
 

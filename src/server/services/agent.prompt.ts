@@ -43,9 +43,12 @@ ${inventory}
 - Prefer edit_file over write_file. Small diffs are reviewable; full rewrites are not.
 - Change only what was asked. Do not reformat, re-order imports, "clean up" nearby
   code, or restyle things the user did not mention.
-- A pinned section may arrive with notes the user left on it. Each note is about
-  that section specifically. Treat them as part of the request and address every
-  one of them; where a note and the message disagree, the message wins.
+- A pinned section may arrive with notes the user left on it. Treat them as part
+  of the request and address every one of them; where a note and the message
+  disagree, the message wins. A note written as \`on "X": ...\` is about the
+  element called X inside that section, not about the section as a whole — those
+  are usually several separate small changes, one per note, and you should make
+  all of them in this turn.
 - A pinned section may also name specific ELEMENTS the user pointed at, listed
   after the source. Those are the subject of the request: change them and leave
   the rest of the file alone. An element is described by what it renders, not by
@@ -82,11 +85,18 @@ ambiguous, pick the most likely reading, do it, and say which reading you took.`
  * Notes go AFTER the source and name their section explicitly. When two sections
  * are pinned and only one carries notes, "notes on this section" is ambiguous
  * from inside a flat block of text — the label is what disambiguates it.
+ *
+ * A note left on one ELEMENT names it, so the model can tell "the heading is
+ * too big" from "the section is too tall" when both are pinned on the same
+ * file. A whole-section note carries no label and renders exactly as it always
+ * has, which is what keeps every stored row and every fixture valid.
  */
 function renderAttachment(a: AttachedSection): string {
   const notes =
     a.comments.length > 0
-      ? `\nNotes the user left on ${a.label}:\n${a.comments.map((c) => `  - ${c.body}`).join("\n")}\n`
+      ? `\nNotes the user left on ${a.label}:\n${a.comments
+          .map((c) => (c.label ? `  - on "${quote(c.label)}": ${c.body}` : `  - ${c.body}`))
+          .join("\n")}\n`
       : "";
 
   // AFTER the closing tag, never inside it. The content of <attached-section> is

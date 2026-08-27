@@ -73,7 +73,7 @@ export function ContextChip({
         <button
           type="button"
           onClick={onNotes}
-          aria-label={`Notes on ${label}`}
+          aria-label={`Comments on ${label}`}
           aria-expanded={Boolean(notesOpen)}
           className={`shrink-0 font-mono text-ui-2xs tabular-nums transition-colors ${
             notesOpen || noteCount > 0
@@ -87,7 +87,7 @@ export function ContextChip({
         noteCount > 0 && (
           <span
             className="shrink-0 font-mono text-ui-2xs tabular-nums text-oe-muted"
-            title={`${noteCount} note${noteCount === 1 ? "" : "s"} sent with this message`}
+            title={`${noteCount} comment${noteCount === 1 ? "" : "s"} sent with this message`}
           >
             {noteCount}n
           </span>

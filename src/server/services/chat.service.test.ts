@@ -63,6 +63,9 @@ const note = (body: string, id = `c-${body}`): Comment => ({
   jobId: null,
   createdAt: "2026-01-01T00:00:00Z",
   resolvedAt: null,
+  targetKey: null,
+  targetRef: null,
+  targetLabel: null,
 });
 
 beforeEach(async () => {

@@ -313,17 +313,70 @@ body[data-oe-mode="browse"] .oe-pin {
   border-color: color-mix(in srgb, var(--oe-ink) 60%, transparent);
 }
 
-.oe-popup-foot {
+/*
+ * Two verbs, one box. `Send` is the one that ends the trip, so it carries the
+ * accent; `Comment` is the one you use over and over, so it sits next to it as
+ * a plain control rather than being demoted to a keyboard shortcut nobody finds.
+ */
+.oe-popup-actions {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 8px 2px 0;
+  gap: 6px;
+  padding: 9px 0 0;
+}
+
+.oe-popup-hint {
+  margin-right: auto;
+  padding-left: 2px;
   color: var(--oe-chrome-faint);
   font-size: 10px;
 }
 
-.oe-popup-foot span + kbd {
-  margin-left: 6px;
+.oe-popup-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  /* The chrome reset above sets `cursor: default` on everything inside a
+     `[data-oe-chrome]` subtree, so a button in here has to ask for its own. */
+  cursor: pointer;
+  padding: 4px 7px 4px 9px;
+  border: 1px solid var(--oe-chrome-line);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.04);
+  color: var(--oe-chrome-text);
+  font: 500 11px/1.4 ui-sans-serif, system-ui, sans-serif;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.oe-popup-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--oe-ink) 45%, transparent);
+  background: rgb(255 255 255 / 0.08);
+}
+
+/* Nothing typed yet, so neither verb has anything to act on. Dimmed rather
+   than hidden: a control that appears once you start typing is a control the
+   user never learns is there. */
+.oe-popup-btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.oe-popup-btn--send {
+  border-color: transparent;
+  background: var(--oe-ink);
+  color: #000;
+}
+
+.oe-popup-btn--send:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--oe-ink) 82%, white);
+}
+
+.oe-popup-btn .oe-kbd {
+  opacity: 0.7;
 }
 
 .oe-kbd {

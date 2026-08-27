@@ -57,10 +57,24 @@ export async function snapshot(attachments: readonly Attachment[]): Promise<Atta
 
   // One query for the whole open set, then bucketed — a note is a sentence, and
   // one round trip beats one per pinned section.
+  //
+  // Bucketed by SECTION even for a note left on one element inside it, which
+  // deliberately disagrees with the chip badge in the composer (that one is
+  // exact-key). The badge answers "what is on this chip"; this answers "what
+  // does the model need to know about this file", and a note must not be
+  // orphaned by which of the two the user happened to pin. The element it was
+  // on rides along as `label`.
   const notes = new Map<string, AttachedSection["comments"]>();
   for (const comment of await commentRepo.listOpen()) {
     const bucket = notes.get(comment.sectionSlug);
-    const entry = { id: comment.id, body: comment.body, status: comment.status };
+    const entry = {
+      id: comment.id,
+      body: comment.body,
+      status: comment.status,
+      // Omitted, not empty — a whole-section note has to render exactly as it
+      // did before notes could land on elements.
+      ...(comment.targetLabel ? { label: comment.targetLabel } : {}),
+    };
     if (bucket) bucket.push(entry);
     else notes.set(comment.sectionSlug, [entry]);
   }

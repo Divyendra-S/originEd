@@ -42,6 +42,9 @@ export type PickHandler = (
   gesture: PickGesture,
 ) => void;
 
+/** The popup's other button: a durable note on these targets (§11). */
+export type CommentHandler = (targets: PickedTarget[], body: string) => void;
+
 export interface PreviewBridge {
   frameRef: React.RefObject<HTMLIFrameElement | null>;
   ready: boolean;
@@ -74,6 +77,15 @@ export interface PreviewBridge {
    * that encloses one element must not be mistaken for a click and unpin it.
    */
   onPick: (handler: PickHandler) => void;
+  /**
+   * Fires when the user leaves a comment from the popup inside the preview.
+   *
+   * Separate from `onPick` because it is a different kind of event: the targets
+   * are already pinned by the time a popup exists, so nothing is toggled and no
+   * turn is sent — this only writes the note down, and the chip in the composer
+   * is where the user sees it land.
+   */
+  onComment: (handler: CommentHandler) => void;
   /** Draw markers and outlines on the page for these pins (§11). */
   setPins: (pins: PinPayload[]) => void;
   /** Fires when the user clicks a pin marker inside the preview. */
@@ -85,6 +97,7 @@ export interface PreviewBridge {
 export function usePreviewBridge(): PreviewBridge {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const pickHandler = useRef<PickHandler | null>(null);
+  const commentHandler = useRef<CommentHandler | null>(null);
   const pinClickHandler = useRef<((key: string) => void) | null>(null);
   const unresolvedHandler = useRef<((keys: string[]) => void) | null>(null);
   // The preview is stateless across reloads; the studio holds the truth and
@@ -135,6 +148,9 @@ export function usePreviewBridge(): PreviewBridge {
           // that made one click look like it had selected the element AND
           // everything around it.
           pickHandler.current?.(msg.targets, msg.note, msg.gesture);
+          break;
+        case "comment":
+          commentHandler.current?.(msg.targets, msg.body);
           break;
         case "pin_click":
           pinClickHandler.current?.(msg.key);
@@ -244,6 +260,10 @@ export function usePreviewBridge(): PreviewBridge {
     pickHandler.current = handler;
   }, []);
 
+  const onComment = useCallback((handler: CommentHandler) => {
+    commentHandler.current = handler;
+  }, []);
+
   const onPinClick = useCallback((handler: (key: string) => void) => {
     pinClickHandler.current = handler;
   }, []);
@@ -279,6 +299,7 @@ export function usePreviewBridge(): PreviewBridge {
     flash,
     reload,
     onPick,
+    onComment,
     setPins,
     onPinClick,
     onUnresolved,

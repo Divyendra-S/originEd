@@ -741,7 +741,12 @@ create table comments (
   id uuid primary key default gen_random_uuid(),
   section_slug text not null, body text not null,
   status text not null default 'open' check (status in ('open','resolved')),
-  job_id uuid, created_at timestamptz not null default now(), resolved_at timestamptz);
+  job_id uuid, created_at timestamptz not null default now(), resolved_at timestamptz,
+  -- Which element inside the section, when the note is on one (§11). All three
+  -- nullable and nothing backfilled: `target_key is null` IS the section note,
+  -- which is what every row written before this already was.
+  target_key text, target_ref jsonb, target_label text);
+create index comments_open_section_idx on comments (section_slug, status);
 ```
 
 **RLS: on for every table, with no policies.** v1 has no auth, so the browser's
@@ -1156,13 +1161,21 @@ itself on install: *"a published component looks malformed"*.) Two heroes on one
 also what made the page switcher in §10 necessary — they are not one page, and the
 manifest now says so.
 
-### Notes on a section
+### Notes on a section — and on one element inside it
 
-A note is the spatial half of the feature. Pinning says *this section is what I'm
-talking about*; a note says *what about it*. Without them, three observations about
-three sections have to be typed as one paragraph that names all three and hope the
-model attributes each clause correctly. With them, each note reaches the model inside
-its own section's block.
+A note is the spatial half of the feature. Pinning says *this is what I'm talking
+about*; a note says *what about it*. Without them, three observations about three
+sections have to be typed as one paragraph that names all three and hope the model
+attributes each clause correctly. With them, each note reaches the model inside its own
+section's block.
+
+**A note anchors to a section, or to one element inside it.** Three nullable columns —
+`target_key`, `target_ref`, `target_label` — and no backfill, because `target_key IS
+NULL` ⇔ *a whole-section note*, which is what every row written before elements were
+commentable already is. `section_slug` stays `NOT NULL` and stays the orphan anchor, so
+`comment.service.list()`'s live-manifest filter is untouched and an element the agent
+rewrites away costs the note its *which element* label and nothing else. `target_label`
+is denormalised out of the jsonb so the chip, the thread and the marker never parse it.
 
 **Notes are durable, pins are not.** That asymmetry is why `comments` is a table and
 the pin set is `useState`. You can close the tab mid-thought and the notes are still
@@ -1170,13 +1183,26 @@ there tomorrow — which is also why a section carrying open notes gets **pinned
 load**: a note that is not attached to the message cannot reach the model, so leaving
 it unpinned would make it decorative.
 
-**A note is written in the composer, not on the page.** The page-side popover is what a
-visual editor usually does, and it was rejected for one concrete reason: a note being
-typed is *state*, and the preview's foreign DOM lives inside a tree React re-renders on
-every hot reload — which is exactly when the agent lands an edit. Losing a half-written
-note to the change it was describing is a worse bug than the one the popover fixes. The
-spatial half survives anyway: the count rides to the page as a badge on the section's
-own pin marker, and clicking that marker opens the thread.
+**The popup takes two answers, and the second is the point of it.** Clicking something
+in Select mode pins it and opens a box. `Enter` **sends** — one turn, about that one
+thing. `⌘Enter`, or the `Comment` button next to it, **writes a note** on it instead and
+closes the box, leaving the pin behind. That second verb is what makes a round of small
+changes describable: walk the page leaving a note on a heading here and a button there,
+then write one message in the composer that arrives with every pinned target and every
+note attached. Without it each observation costs its own turn, and a turn is ~50s.
+
+A drag's whole selection gets the same note, one row each. The user drew a rectangle
+around three cards and said one thing about them; filing it under the first alone would
+be a worse reading of that gesture than repeating it.
+
+**Reading and resolving still happen in the composer, not on the page.** The full
+page-side popover — a thread you scroll, add to and tick items off inside the iframe —
+is what a visual editor usually does, and it was rejected for one concrete reason: that
+state lives in a tree React re-renders on every hot reload, which is exactly when the
+agent lands an edit. The popup accepts this risk for exactly one line of text, which it
+already carried for the send path; losing a sentence to a reload costs a retype, losing
+a thread costs the work. The spatial half survives anyway: the count rides to the page
+as a badge on the pin's own marker, and clicking that marker opens the thread.
 
 So the marker now does two things, and `count` is what picks:
 
@@ -1188,6 +1214,22 @@ So the marker now does two things, and `count` is what picks:
 The colour is a promise about the click. A marker that turns red and then opens a panel
 is the kind of small lie that makes a tool feel unpredictable, so `syncPins` writes
 `data-oe-notes` and the CSS follows it.
+
+**Two groupings, and they are allowed to disagree.** The chip badge is *exact-pin*: a
+note on the hero's headline counts against the headline's chip. The snapshot is *by
+section*: `<attached-section slug="hero">` carries **every** open note on the hero,
+each prefixed with the element it was left on — `- on "Headline": too big`. The badge
+answers *what is on this chip*; the snapshot answers *what does the model need to know
+about this file*. Bucketing the snapshot by pin instead would orphan a note whenever the
+user pinned the section rather than the element it was about.
+
+The badge has one fallback, and it is load-bearing. A note shows on the finest thing
+that is **actually pinned** — its element if that element's pin is in the set, otherwise
+its section. Without it, the agent rewriting a section downgrades the element pin
+(`downgradePins`) and the note is left counted against a key nothing is pinned at: still
+sent, still open in Postgres, and invisible in the composer. A note going quiet is the
+one failure this feature cannot have, so `bucketNotes` owns that rule and is tested on
+its own.
 
 **A turn closes the notes it carried, and only those.** The ids come out of
 `jobs.context` — the snapshot frozen at send time — not from a fresh query. Resolving

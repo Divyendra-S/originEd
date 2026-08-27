@@ -20,11 +20,11 @@ import { ContextChip } from "./ContextChip";
 export interface ComposerNotes {
   /** Open-note count per pin key, for the chip badges. */
   counts: ReadonlyMap<string, number>;
-  /** The section whose thread is expanded, if any. */
-  openSlug: string | null;
-  setOpenSlug: (slug: string | null) => void;
-  forSection: (slug: string) => Comment[];
-  add: (slug: string, body: string) => void;
+  /** The pin whose thread is expanded, if any — a section or one element. */
+  openKey: string | null;
+  setOpenKey: (key: string | null) => void;
+  forPin: (key: string) => Comment[];
+  add: (pin: Pinned, body: string) => void;
   resolve: (id: string) => void;
   busy: boolean;
 }
@@ -81,11 +81,11 @@ export function Composer({
 
   const canSend = value.trim().length > 0 && !busy;
 
-  // The thread follows the pin. Unpinning the section whose notes are open
-  // leaves nothing to anchor the panel to, so it closes with it.
-  const openSection = useMemo(
-    () => attachments.find((p) => isWholeSection(p) && p.key === notes.openSlug) ?? null,
-    [attachments, notes.openSlug],
+  // The thread follows the pin. Unpinning the thing whose notes are open leaves
+  // nothing to anchor the panel to, so it closes with it.
+  const openPin = useMemo(
+    () => attachments.find((p) => p.key === notes.openKey) ?? null,
+    [attachments, notes.openKey],
   );
 
   const totalNotes = useMemo(
@@ -96,23 +96,23 @@ export function Composer({
   const summary =
     attachments.length === 0
       ? "Drag over the preview to pin a region"
-      : `${attachments.length} pinned${totalNotes > 0 ? ` · ${totalNotes} note${totalNotes === 1 ? "" : "s"}` : ""}`;
+      : `${attachments.length} pinned${totalNotes > 0 ? ` · ${totalNotes} comment${totalNotes === 1 ? "" : "s"}` : ""}`;
 
   return (
     <div className="shrink-0 px-3 pb-3">
       <div className="rounded-card border border-oe-border bg-oe-raised transition-colors focus-within:border-oe-border-strong">
-        {openSection && (
+        {openPin && (
           <div className="p-2 pb-0">
             <CommentThread
-              section={{
-                slug: openSection.sectionSlug,
-                label: openSection.sectionLabel,
-                file: openSection.file,
-              }}
-              comments={notes.forSection(openSection.sectionSlug)}
-              onAdd={(body) => notes.add(openSection.sectionSlug, body)}
+              anchorKey={openPin.key}
+              title={pinLabel(openPin)}
+              // Only an element needs saying where it is. "Comments on Hero ·
+              // Hero" would be the panel explaining itself to itself.
+              where={isWholeSection(openPin) ? undefined : openPin.sectionLabel}
+              comments={notes.forPin(openPin.key)}
+              onAdd={(body) => notes.add(openPin, body)}
               onResolve={notes.resolve}
-              onClose={() => notes.setOpenSlug(null)}
+              onClose={() => notes.setOpenKey(null)}
               busy={notes.busy}
             />
           </div>
@@ -127,16 +127,12 @@ export function Composer({
                 kind={isWholeSection(pin) ? "section" : "element"}
                 title={isWholeSection(pin) ? pin.file : `${pin.sectionLabel} · ${pin.ref.trail}`}
                 noteCount={notes.counts.get(pin.key) ?? 0}
-                notesOpen={notes.openSlug === pin.key}
+                notesOpen={notes.openKey === pin.key}
                 onFocus={() => onFocusAttachment(pin.sectionSlug)}
-                // Notes are anchored to a section, so only a section pin offers
-                // the control. An element chip that opened its section's thread
-                // would claim the note belongs to the element, and it does not.
-                onNotes={
-                  isWholeSection(pin)
-                    ? () => notes.setOpenSlug(notes.openSlug === pin.key ? null : pin.key)
-                    : undefined
-                }
+                // Every chip offers the control now, element chips included: a
+                // note anchors to the thing it is about, so the one place to
+                // read and write it is the chip for that thing.
+                onNotes={() => notes.setOpenKey(notes.openKey === pin.key ? null : pin.key)}
                 onRemove={() => onRemoveAttachment(pin.key)}
               />
             ))}

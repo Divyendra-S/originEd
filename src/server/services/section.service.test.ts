@@ -42,6 +42,9 @@ const note = (sectionSlug: string, body: string, id = `c-${body}`): Comment => (
   jobId: null,
   createdAt: "2026-01-01T00:00:00Z",
   resolvedAt: null,
+  targetKey: null,
+  targetRef: null,
+  targetLabel: null,
 });
 
 const abs = (name: string) => path.join(WORKSPACE_ROOT, SANDBOX, name);
@@ -171,6 +174,24 @@ describe("snapshot — notes", () => {
     expect(attached.comments).toEqual([
       { id: "c-headline is too big", body: "headline is too big", status: "open" },
     ]);
+  });
+
+  it("carries the ELEMENT a note was left on, as a label", async () => {
+    // The badge in the composer is exact-key; this is bucketed by section, and
+    // they are allowed to disagree. A note must not be orphaned by which of the
+    // two the user happened to pin, so the section's block carries every open
+    // note on it and says which element each was about.
+    notes.open = [{ ...note("hero", "too big"), targetKey: "hero#0-1", targetLabel: "Headline" }];
+    const [attached] = await snapshot(["hero"]);
+    expect(attached.comments).toEqual([
+      { id: "c-too big", body: "too big", status: "open", label: "Headline" },
+    ]);
+  });
+
+  it("gives an element note to the section even when only the SECTION is pinned", async () => {
+    notes.open = [{ ...note("hero", "too big"), targetKey: "hero#0-1", targetLabel: "Headline" }];
+    const [attached] = await snapshot(["hero"]);
+    expect(attached.comments).toHaveLength(1);
   });
 
   it("gives each section only its OWN notes", async () => {
