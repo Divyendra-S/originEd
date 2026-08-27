@@ -3,14 +3,17 @@
 /**
  * The preview half of the postMessage bridge (§11).
  *
- * Two gestures, and the difference between them is the whole feature:
+ * Two gestures, and both end the same way — pinned, with a box open to say what
+ * should change:
  *
- *   click — pin the smallest meaningful thing under the cursor, immediately.
- *   drag  — rubber-band a region, pin everything it encloses, AND open an input
- *           right there. The pins land in the composer the moment the pointer
- *           comes up, so the popup is an offer, not a gate: type and press Enter
- *           to send the turn from here, or ignore it and write in the composer
- *           against the chips that are already waiting there.
+ *   click — pin the smallest meaningful thing under the cursor. Click the same
+ *           thing again and it is UNPINNED, and no box opens: the second click
+ *           has to undo the first or it is a dead click.
+ *   drag  — rubber-band a region and pin everything it encloses.
+ *
+ * The pins land in the composer the moment the pointer comes up, so the popup is
+ * an offer, not a gate: type and press Enter to send the turn from here, or
+ * ignore it and write in the composer against the chips already waiting there.
  *
  * Deliberately OUTSIDE src/workspace/: this is the lens the user watches the
  * page through, and the agent must not be able to edit it.
@@ -35,7 +38,6 @@ import {
   pinsStale,
   setHover,
   setHoverTarget,
-  setSelection,
   syncPins,
   type Pin,
 } from "./dom";
@@ -106,8 +108,16 @@ function targetsInBox(doc: Document, box: Box): PickedTarget[] {
 }
 
 interface Popup {
+  /** What the popup is anchored under. A click collapses this to a point. */
   box: Box;
   targets: PickedTarget[];
+  /** Carried so Enter reports the gesture that opened the box, not a guess. */
+  gesture: PickGesture;
+}
+
+/** A click has no rectangle. Anchor the popup to the pixel it happened on. */
+function pointBox(x: number, y: number): Box {
+  return { left: x, top: y, right: x, bottom: y };
 }
 
 export function Inspector() {
@@ -194,14 +204,10 @@ export function Inspector() {
           if (msg.mode === "browse") {
             clearAttr(doc, "data-oe-hover");
             clearAttr(doc, "data-oe-hover-el");
-            clearAttr(doc, "data-oe-selected");
             dragRef.current = null;
             setMarquee(null);
             closePopup();
           }
-          break;
-        case "set_selection":
-          setSelection(doc, msg.sectionSlug);
           break;
         case "set_pins":
           pinsRef.current = msg.pins;
@@ -219,14 +225,18 @@ export function Inspector() {
 
     function hoverAt(target: EventTarget | null) {
       const boundary = boundaryFrom(target);
-      setHover(doc, boundary);
       const el = boundary && target instanceof Element ? meaningfulFrom(boundary, target) : null;
-      setHoverTarget(doc, el === boundary ? null : el);
+      // Exactly one highlight, and it is on the thing a click would pin. Tinting
+      // the section AND outlining something inside it is what made a click look
+      // like it had selected the element and everything around it.
+      const inside = el !== null && el !== boundary;
+      setHover(doc, inside ? null : boundary);
+      setHoverTarget(doc, inside ? el : null);
       post({
         source: "preview",
         type: "hover",
         sectionSlug: boundary?.dataset.sectionSlug ?? null,
-        label: el && el !== boundary ? refFor(boundary!, el).label : null,
+        label: inside ? refFor(boundary!, el).label : null,
       });
     }
 
@@ -269,18 +279,27 @@ export function Inspector() {
       setMarquee(null);
 
       if (!start.live) {
-        // A plain click: pin what is under the cursor and get out of the way.
-        // No popup — the fast path has to stay one gesture, or pinning three
-        // things in a row becomes three dialogs.
-        //
-        // Hit-tested rather than read off `e.target`, because pointer capture
-        // has retargeted the event to the root element by now.
+        // A plain click. Hit-tested rather than read off `e.target`, because
+        // pointer capture has retargeted the event to the root element by now.
         const hit = doc.elementFromPoint(e.clientX, e.clientY);
         const boundary = boundaryFrom(hit);
         if (!boundary || !hit) return;
         const el = meaningfulFrom(boundary, hit);
         const ref = el === boundary ? sectionRef(boundary) : refFor(boundary, el);
-        commit([picked(boundary, ref)], null, "click");
+        const target = picked(boundary, ref);
+
+        // The studio treats a click as a TOGGLE, so this same post pins or
+        // unpins depending on what is already there.
+        const wasPinned = pinsRef.current.some((pin) => pin.key === target.key);
+        post({ source: "preview", type: "pick", targets: [target], note: null, gesture: "click" });
+
+        // Pinned → offer the box. Unpinned → there is nothing left to say
+        // something about, and opening a box over it would be a question about
+        // a thing the user just took away. `onPointerDown` already closed any
+        // popup that was open, so this branch has only to not open a new one.
+        if (wasPinned) return;
+        setNote("");
+        setPopup({ box: pointBox(e.clientX, e.clientY), targets: [target], gesture: "click" });
         return;
       }
 
@@ -292,7 +311,7 @@ export function Inspector() {
       // popup costs the user nothing and they can write over there instead.
       post({ source: "preview", type: "pick", targets, note: null, gesture: "drag" });
       setNote("");
-      setPopup({ box, targets });
+      setPopup({ box, targets, gesture: "drag" });
     }
 
     function onClick(e: MouseEvent) {
@@ -424,7 +443,7 @@ export function Inspector() {
                 // way rather than posting an empty turn.
                 if (e.key === "Enter") {
                   const text = note.trim();
-                  if (text) commit(popup.targets, text, "drag");
+                  if (text) commit(popup.targets, text, popup.gesture);
                   else closePopup();
                 }
                 if (e.key === "Escape") closePopup();

@@ -36,11 +36,12 @@ import {
   type Pinned,
 } from "@/hooks/usePins";
 import type { Attachment, Comment, JobChanges, PreviewMode } from "@/lib/types";
-import { labelForSlug } from "@/workspace/manifest";
+import { labelForSlug, pageForSection, pages } from "@/workspace/manifest";
 import { BuildErrorCard } from "./chat/BuildErrorCard";
 import { Composer, type ComposerNotes } from "./chat/Composer";
 import { toolLabel } from "./chat/ToolCard";
 import { Transcript, type TranscriptTurn, type TurnAttachment } from "./chat/Transcript";
+import { PageSwitcher } from "./preview/PageSwitcher";
 import { PreviewCanvas } from "./preview/PreviewCanvas";
 import { StatusPill } from "./preview/StatusPill";
 import type { ViewportId } from "./preview/viewport";
@@ -156,12 +157,21 @@ export function StudioShell() {
   // are anchored to sections, so an element pin's badge is legitimately empty.
   const noteCounts = useMemo(() => countBySection(openComments), [openComments]);
 
-  const { flash, probe } = preview;
+  const { flash, probe, setPage } = preview;
   const stream = useJobStream(activeJobId, {
     // The write already happened server-side; HMR is repainting the iframe. The
     // pulse is what tells the user WHICH section moved.
+    //
+    // First, follow the edit to the page that shows it. Only one page is on
+    // screen now (§10), and a section the current one does not render would
+    // change with nothing to see — `add_section` in particular always lands on
+    // the home page, whichever page you were looking at when you asked for it.
+    // Switching remounts the frame, so the pulse is lost in that case; the newly
+    // rendered section is the louder signal anyway.
     onFileChanged: (event) => {
-      if (event.sectionSlug) flash(event.sectionSlug);
+      if (!event.sectionSlug) return;
+      setPage(pageForSection(event.sectionSlug));
+      flash(event.sectionSlug);
     },
     onDone: (event) => {
       void queryClient.invalidateQueries({ queryKey: ["chat", chatId] });
@@ -216,7 +226,7 @@ export function StudioShell() {
   // effect — and double-click-to-reset covers the case persistence was for.
 
   // ── §11: the page and the composer are two views of one pin set ──────────
-  const { onPick, onPinClick, onUnresolved, setPins, setSelected, setMode, selected } = preview;
+  const { onPick, onPinClick, onUnresolved, setPins, setMode } = preview;
   const { pinned, toggle, pick, remove, add: addPins, keep: keepPins, reconcile, downgrade } = pins;
 
   const notesFor = useCallback(
@@ -298,16 +308,13 @@ export function StudioShell() {
       }
 
       if (gesture === "click" && targets.length === 1) {
-        const target = targets[0];
-        const wasPinned = pinned.some((p) => p.key === target.key);
-        toggle(target);
-        if (wasPinned && selected === target.sectionSlug) setSelected(null);
+        toggle(targets[0]);
         return;
       }
 
       pick(targets);
     });
-  }, [onPick, pinned, toggle, pick, selected, setSelected, send, busy]);
+  }, [onPick, pinned, toggle, pick, send, busy]);
 
   // Clicking the pin marker ON the page. A marker carrying notes opens them —
   // the badge is the only place they are visible from the preview, so making it
@@ -319,9 +326,8 @@ export function StudioShell() {
         return;
       }
       remove(key);
-      if (selected === key) setSelected(null);
     });
-  }, [onPinClick, noteCounts, remove, selected, setSelected]);
+  }, [onPinClick, noteCounts, remove]);
 
   // The agent rewrote a section and the pinned element inside it is gone. The
   // preview is the only side with a DOM, so it reports; the studio downgrades
@@ -372,11 +378,8 @@ export function StudioShell() {
       remove(key);
       // The thread is anchored to the chip; unpinning leaves it nothing to sit on.
       setOpenNotes((current) => (current === key ? null : current));
-      // Only if it was the selected one — clearing unconditionally drops the
-      // outline off whatever section the user is actually looking at.
-      if (selected === key) setSelected(null);
     },
-    [remove, selected, setSelected],
+    [remove],
   );
 
   const changesByJob = useMemo(
@@ -490,13 +493,12 @@ export function StudioShell() {
         ? toolLabel(runningTool.name)
         : "Working";
 
+  const what = preview.hoveredLabel ?? hoveredSection;
   const hint =
     preview.mode === "select"
-      ? preview.hoveredLabel
-        ? `Click to pin ${preview.hoveredLabel} · drag a box to comment`
-        : hoveredSection
-          ? `Click to pin ${hoveredSection} · drag a box to comment`
-          : "Click to pin · drag a box and say what should change"
+      ? what
+        ? `Click ${what} to pin it and say what should change · click again to remove`
+        : "Click anything to pin it and say what should change"
       : null;
 
   return (
@@ -509,10 +511,6 @@ export function StudioShell() {
       */}
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-oe-border px-3">
         <span className="text-ui-md font-medium tracking-[-0.02em]">originEd</span>
-
-        <span className="font-mono text-ui-2xs text-oe-faint">
-          {preview.sections.length.toString().padStart(2, "0")} sections
-        </span>
 
         <span
           className={`min-w-0 flex-1 truncate text-ui-xs transition-colors ${
@@ -528,6 +526,13 @@ export function StudioShell() {
             hint
           )}
         </span>
+
+        {/* Which page you are looking at, and therefore what a click in the
+            preview can pin. Right-hand side because it belongs to the project,
+            not to the page (§10). Read straight off the manifest rather than off
+            the bridge: the switcher must be usable before the frame has ever
+            reported in. */}
+        <PageSwitcher pages={pages} value={preview.page} onChange={preview.setPage} />
 
         <StatusPill status={preview.status} ready={preview.ready} onReload={preview.reload} />
       </header>
@@ -597,6 +602,7 @@ export function StudioShell() {
             onReload={preview.reload}
             pinCount={pinned.length}
             pinSummary={pinned.map(pinLabel).join(" · ")}
+            page={preview.page}
           />
         </main>
       </div>

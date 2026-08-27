@@ -13,5 +13,9 @@
     "incremental": false,
     "plugins": []
   },
-  "include": ["next-env.d.ts", "src/workspace/**/*.ts", "src/workspace/**/*.tsx"]
+  "include": ["next-env.d.ts", "src/workspace/**/*.ts", "src/workspace/**/*.tsx"],
+  // The agent's typecheck reports on the PAGE. Our own tests happen to live in
+  // the jail (next to the manifest they assert about) and are none of its
+  // business — a vitest import it cannot fix would be noise on every job.
+  "exclude": ["src/workspace/**/*.test.ts"]
 }

@@ -19,7 +19,6 @@ import {
   pinsStale,
   setHover,
   setHoverTarget,
-  setSelection,
   syncPins,
 } from "./dom";
 import { refFor, refKey, sectionRef } from "./target";
@@ -69,7 +68,7 @@ describe("boundaryFrom", () => {
   });
 });
 
-describe("setHover / setHoverTarget / setSelection", () => {
+describe("setHover / setHoverTarget", () => {
   it("marks exactly one section at a time", () => {
     setHover(document, boundary("hero"));
     setHover(document, boundary("features"));
@@ -77,24 +76,20 @@ describe("setHover / setHoverTarget / setSelection", () => {
     expect(boundary("features").hasAttribute("data-oe-hover")).toBe(true);
   });
 
-  it("tracks the element and the section independently", () => {
-    // They are two different outlines: the section tints, the element outlines.
-    // Sharing one attribute would make the section flash on every pointer move.
+  it("keeps the two attributes on separate elements", () => {
+    // The Inspector only ever lights one of them at a time, but they are stored
+    // separately so the section tint and the element outline can be different
+    // rules — sharing one attribute would make the section flash on every move.
     setHover(document, boundary("hero"));
     setHoverTarget(document, document.getElementById("headline"));
     expect(boundary("hero").hasAttribute("data-oe-hover")).toBe(true);
     expect(document.getElementById("headline")!.hasAttribute("data-oe-hover-el")).toBe(true);
   });
 
-  it("clears the outline when nothing is selected", () => {
-    setSelection(document, "hero");
-    setSelection(document, null);
-    expect(document.querySelectorAll("[data-oe-selected]")).toHaveLength(0);
-  });
-
-  it("ignores a slug that is not on the page", () => {
-    setSelection(document, "pricing");
-    expect(document.querySelectorAll("[data-oe-selected]")).toHaveLength(0);
+  it("clears the element outline when the pointer moves onto bare section", () => {
+    setHoverTarget(document, document.getElementById("headline"));
+    setHoverTarget(document, null);
+    expect(document.querySelectorAll("[data-oe-hover-el]")).toHaveLength(0);
   });
 
   it("clearAttr strips the attribute everywhere it landed", () => {

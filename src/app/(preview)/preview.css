@@ -55,9 +55,11 @@ body[data-oe-mode="select"] {
 /* ── What the cursor is over ────────────────────────────────────────────── */
 
 /*
- * The SECTION reads as a tint and the ELEMENT reads as a line. Two hovers are
- * live at once — you are always inside a section and usually over something
- * inside it — so they cannot both be outlines or the page turns into a diagram.
+ * ONE thing is lit at a time, and it is the thing a click would pin. The section
+ * tints only when the pointer is over its own background; the moment there is
+ * something inside it to point at, that gets the line and the section goes dark
+ * again. Lighting both — which is what this used to do — made a click on a
+ * heading look like it had also selected everything around it.
  */
 body[data-oe-mode="select"] .oe-section::after {
   content: "";
@@ -71,10 +73,6 @@ body[data-oe-mode="select"] .oe-section::after {
 
 body[data-oe-mode="select"] .oe-section[data-oe-hover]::after {
   background: color-mix(in srgb, var(--oe-ink) 4%, transparent);
-}
-
-body[data-oe-mode="select"] .oe-section[data-oe-selected]::after {
-  border-color: color-mix(in srgb, var(--oe-ink) 55%, transparent);
 }
 
 /*

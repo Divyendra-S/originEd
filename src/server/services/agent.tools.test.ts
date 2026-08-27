@@ -353,6 +353,10 @@ describe("add_section / remove_section", () => {
     expect(page).toContain("  pricing: Pricing,");
   });
 
+  /** The page's own order with "pricing" spliced in behind the hero. */
+  const withPricingAfterHero = (base: string[]) =>
+    base.flatMap((slug) => (slug === "hero" ? [slug, "pricing"] : [slug]));
+
   it("names the new section on the ChangeCard, which slugForFile cannot", async () => {
     // The server's imported copy of manifest.ts is stale for a section this very
     // job created (§14 risk 9) — so the slug is passed, not looked up.
@@ -366,17 +370,21 @@ describe("add_section / remove_section", () => {
     // the agent added a third section and was told the page had two — with its
     // own new file missing from the list. A model that believes its section does
     // not exist is one step from adding it a second time.
+    //
+    // Asserted against the manifest as it actually is, not against a literal
+    // list: this runs on the REAL workspace, so hard-coding the page's sections
+    // makes adding one to the product break a test about `add_section`.
     const before = await call("list_sections");
-    expect((before.payload.sections as { slug: string }[]).map((s) => s.slug)).toEqual(["hero", "features"]);
+    const base = (before.payload.sections as { slug: string }[]).map((s) => s.slug);
+    expect(base).toContain("hero");
+    expect(base).not.toContain("pricing");
 
     await call("add_section", { slug: "pricing", label: "Pricing", after: "hero" });
 
     const after = await call("list_sections");
-    expect((after.payload.sections as { slug: string }[]).map((s) => s.slug)).toEqual([
-      "hero",
-      "pricing",
-      "features",
-    ]);
+    expect((after.payload.sections as { slug: string }[]).map((s) => s.slug)).toEqual(
+      withPricingAfterHero(base),
+    );
   });
 
   it("names a section this job created even when the slug is not passed in", async () => {
@@ -409,8 +417,10 @@ describe("add_section / remove_section", () => {
   });
 
   it("places the section where it was asked to", async () => {
+    const before = await call("list_sections");
+    const base = (before.payload.sections as { slug: string }[]).map((s) => s.slug);
     const r = await call("add_section", { slug: "pricing", after: "hero" });
-    expect(r.payload.order).toEqual(["hero", "pricing", "features"]);
+    expect(r.payload.order).toEqual(withPricingAfterHero(base));
   });
 
   it("leaves the workspace untouched when the call cannot succeed", async () => {

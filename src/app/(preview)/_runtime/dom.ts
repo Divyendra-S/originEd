@@ -61,7 +61,13 @@ function setSolely(doc: Document, attr: string, el: Element | null): void {
   el?.setAttribute(attr, "");
 }
 
-/** The section under the cursor. Drawn as a faint tint, not an outline. */
+/**
+ * The section under the cursor — set only when the SECTION is what a click would
+ * pin, i.e. the pointer is over its own background rather than over something
+ * inside it. Exactly one of this and `setHoverTarget` is ever live, because two
+ * highlights at once made every click read as having selected the thing and the
+ * whole section around it.
+ */
 export function setHover(doc: Document, el: Element | null): void {
   setSolely(doc, "data-oe-hover", el);
 }
@@ -69,10 +75,6 @@ export function setHover(doc: Document, el: Element | null): void {
 /** The ELEMENT under the cursor — what a click would actually pin. */
 export function setHoverTarget(doc: Document, el: Element | null): void {
   setSolely(doc, "data-oe-hover-el", el);
-}
-
-export function setSelection(doc: Document, slug: string | null): void {
-  setSolely(doc, "data-oe-selected", slug ? boundaryFor(doc, slug) : null);
 }
 
 /**

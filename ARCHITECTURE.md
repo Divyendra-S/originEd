@@ -764,7 +764,7 @@ work actually has. The visual language is ours.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ ◆ originEd │ 1 section │ Working…                    ● 240ms   ⟳           │ 48px
+│ ◆ originEd │ Working… 12s              ⧉ Landing ▾      ● 240ms   ⟳       │ 44px
 ├──────────────────────────┬─────────────────────────────────────────────────┤
 │  CHAT              33%   ┊  CANVAS                                   67%   │
 │                          ┊    ┌───────────────────────────────────────┐    │
@@ -827,6 +827,67 @@ in the popup the drag opens — or in the composer against a pinned section.
 `Esc` leaves Select. The shortcut handler ignores keystrokes whose target is an input,
 textarea or contenteditable — otherwise typing the word "select" changes modes four times.
 
+### One page at a time
+
+The workspace is a flat list of sections, but the site it renders is not. `hero` and
+`features` are one landing page; `hero-08` is a different design that arrived through
+`originkit add`. Stacked in one scroll they are two full-screen navbars and a page that
+does not exist — and the first thing anyone does is scroll past half of it to reach the
+half they are editing.
+
+So `manifest.ts` carries a second array, **`pages`**, grouping section slugs into the
+screens a person actually thinks in, and the app bar carries a **page switcher** on the
+right. It sits on the app bar rather than the preview's own bar by the rule above —
+which page the project is *about* is not an act on the page, the way Browse/Select and
+the viewport are.
+
+**There is no "all pages" option, deliberately.** It was the first thing tried and it is
+the thing being fixed: an entry that stacks unrelated designs one after another is not a
+view of anything. Every option in the menu renders a screen that exists.
+
+**Membership lives in `pages`, not as a fourth key on each section.** `add_section`
+writes `{ slug, label, file }` entry lines into `sections` (§7, `section.codegen.ts`) and
+knows nothing about grouping; a required fourth key would mean either teaching the
+codegen about pages or letting the agent write sections that belong nowhere. Instead a
+section no page claims falls onto the **first** page — which is also the honest default
+for "the agent just added this and nobody has said where it goes". `pageForSection` is
+the inverse, and `onFileChanged` uses it to *follow* an edit that lands on a page you are
+not looking at: without that, asking for a new section while viewing hero-08 changes
+nothing you can see.
+
+**It is a query parameter, not a message.** `/preview?page=hero-08`, read in
+`(preview)/preview/page.tsx` — outside the jail — and handed to `WorkspacePage` as
+`page`. Two alternatives were rejected:
+
+- *Hide the others with CSS.* No reload, and `resolveRef` reads tags, attributes and
+  text, so pins on a hidden section keep resolving. But a hidden `<canvas>` keeps its
+  `requestAnimationFrame` loop: showing one hero would still pay for the other one
+  animating behind it, which is exactly the cost the switcher exists to avoid.
+- *Hold the focus in a client component inside the frame.* Instant, but it makes the
+  whole workspace a client tree — and §12's build-error probe is a `fetch("/preview")`
+  reading an HTTP status, which only means anything while sections still SERVER-render.
+
+The iframe is **keyed** on the page so a switch replaces the element rather than
+navigating it. Navigating an iframe pushes an entry onto the *parent's* session history,
+and three switches would mean three presses of Back before the studio itself moves.
+
+Nothing downstream had to change, and that is worth stating because it is not luck.
+`syncPins` skips a pin whose boundary is not in the document rather than reporting it
+lost, so pins on the sections you are not looking at sit quietly instead of churning
+through `pin_unresolved` → downgrade → `set_pins`. And the Inspector reports `sections`
+from the **manifest**, not from the boundaries it can see, so `reconcilePins` does not
+unpin the rest of the page the moment you focus one part of it.
+
+The one visible cost: switching remounts the frame, so an edit that also *changes* the
+page swallows its own pulse. The newly rendered section is the louder signal, and the
+ChangeCard still names the file.
+
+A page the agent has since deleted reads as the first one — derived in `livePage`, not
+corrected in an effect, because `setState` during render is the lint rule this repo
+enforces and an empty frame with no way back is the worse failure. `manifest.test.ts`
+asserts the rules rather than the contents: every section reachable from exactly one
+page, manifest order preserved, an unknown slug still rendering something.
+
 ### The page is a card, not a pane
 
 The canvas behind the preview is the darkest surface in the app and the page sits on it
@@ -867,7 +928,6 @@ The preview is a same-origin iframe, so `postMessage` with an explicit `targetOr
 ```ts
 // parent → preview
 { source:"studio", type:"set_mode",      mode:"browse"|"select" }
-{ source:"studio", type:"set_selection", sectionSlug: string|null }
 { source:"studio", type:"set_pins",      pins:{ sectionSlug, count }[] }
 { source:"studio", type:"flash",         sectionSlug }        // after an edit lands
 // preview → parent
@@ -926,19 +986,35 @@ Notes the user left on Hero:
 A section is not a unit of intent. People mean *this button*, *this paragraph*, *this
 input* — so Select has two gestures:
 
-- **Click** → the smallest meaningful thing under the cursor is pinned, immediately.
-  `meaningfulFrom` climbs out of icons and content-free wrappers to the nearest semantic
-  atom, so a click on the `<svg>` inside a submit button pins the button.
+- **Click** → the smallest meaningful thing under the cursor is pinned, and a small
+  **input opens under the cursor**. `meaningfulFrom` climbs out of icons and
+  content-free wrappers to the nearest semantic atom, so a click on the `<svg>` inside a
+  submit button pins the button.
 - **Drag** → a marquee. Everything mostly inside the rectangle is pinned, outermost-wins
   so a box round a card names the card rather than its heading, its paragraph and the
-  card; a box that swallows a whole section names the section. Then a small **input
-  opens where the drag ended**.
+  card; a box that swallows a whole section names the section. Then the same input
+  **opens where the drag ended**.
+
+A click first spent a phase with no popup, on the argument that the fast path should
+stay one gesture. In use it is the wrong trade: pointing at a thing and saying what is
+wrong with it is one thought, and making the common gesture the one that *cannot*
+finish the thought sends every click to the composer anyway. So both gestures end the
+same way, and the fast path is still one gesture — the popup is dismissable and the pin
+has already landed.
 
 The targets are pinned the instant the pointer lifts — *before* the popup opens, and
 whatever happens to it afterwards. The popup is an offer, not a gate: **Enter sends the
 turn from there**, and dismissing it leaves the chips sitting in the composer to be
 written against instead. Routing that text into the composer for a second Enter, in a
 second box, would make one thought cost two submissions.
+
+**Exactly one thing is highlighted, and it is the thing a click would pin.** The section
+tints only when the pointer is over its own background — the moment there is something
+inside it to point at, that takes the outline and the section goes dark. Lighting both,
+which is what the first version did, made every click look like it had selected the
+element *and* everything around it. For the same reason there is no `set_selection`
+echo: the pin is the mark, it sits on the element where the element actually is, and it
+survives the pointer leaving.
 
 The studio cannot infer which gesture it is looking at, so the `pick` message carries a
 `gesture` field. Target *count* is not a proxy: a drag that happens to enclose exactly
@@ -993,9 +1069,11 @@ and `downgradePins` returns the *same array* when it changes nothing.
 
 The chip and the marker are two views of one pin set, and both directions work:
 
-- **Click something already pinned** → **unpinned**. A second click that silently does
-  nothing reads as the tool being broken. A *drag* adds rather than toggles, because a
-  drag overlapping what you pinned a moment ago would otherwise take half of it away.
+- **Click something already pinned** → **unpinned**, and no box opens: there is nothing
+  left to say something about, and a question about a thing you just took away is worse
+  than silence. A second click that silently did nothing would read as the tool being
+  broken. A *drag* adds rather than toggles, because a drag overlapping what you pinned
+  a moment ago would otherwise take half of it away.
 - **Click the marker** → unpinned, in *either* mode. The marker is live in Browse too:
   the pin belongs to the page, and needing to arm a tool before you can drop one would
   say otherwise.
@@ -1048,6 +1126,14 @@ one section cannot demonstrate click-to-select — every click has the same answ
 `page.tsx`'s manifest→registry wiring had never actually run with more than one entry.
 It doubles as the shape Phase 8 asks the agent to copy: a default export, a manifest
 entry, a registry entry, nothing else.
+
+`sections/hero-08.tsx` is the third, and the first added the way a user would: `npx
+originkit@latest add hero-08`, then the same three edits. It is wired to the registry's
+`section-hero`, not to its `hero-08` entry point — that one renders `procura-hero`,
+whose `.h08-*` stylesheet was never published, so it comes up unstyled. (The CLI says so
+itself on install: *"a published component looks malformed"*.) Two heroes on one page is
+also what made the page switcher in §10 necessary — they are not one page, and the
+manifest now says so.
 
 ### Notes on a section
 

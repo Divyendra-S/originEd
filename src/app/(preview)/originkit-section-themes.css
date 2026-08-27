@@ -34,3 +34,9 @@
   --font-tight: "Inter Tight", Inter, ui-sans-serif, sans-serif;
   --font-helvetica-neue: "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
+
+/* originkit:hero-08 */
+/* src/workspace/components/originkit/hero-08.css */
+@theme {
+  --font-helvetica: "Helvetica", Arial, ui-sans-serif, sans-serif;
+}

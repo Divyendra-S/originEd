@@ -1,0 +1,21 @@
+<svg width="120" height="756" viewBox="0 0 120 756" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g clip-path="url(#clip0_17_21)">
+<mask id="path-1-inside-1_17_21" fill="white">
+<path d="M0 0H120V756H0V0Z"/>
+</mask>
+<rect opacity="0.1" width="120" height="756" fill="url(#pattern0_17_21)"/>
+</g>
+<path d="M0 756H1V0H0H-1V756H0Z" fill="white" fill-opacity="0.1" mask="url(#path-1-inside-1_17_21)"/>
+<defs>
+<clipPath id="clip0_17_21">
+<path d="M0 0H120V756H0V0Z" fill="white"/>
+</clipPath>
+<pattern id="pattern0_17_21" patternUnits="userSpaceOnUse" patternTransform="matrix(7 0 0 7 -0.355469 -0.355469)" preserveAspectRatio="none" viewBox="-0.355469 -0.355469 7 7" width="1" height="1">
+<use xlink:href="#pattern0_17_21_inner" transform="translate(-7 -7)"/>
+<use xlink:href="#pattern0_17_21_inner" transform="translate(0 -7)"/>
+<use xlink:href="#pattern0_17_21_inner" transform="translate(-7 0)"/>
+<g id="pattern0_17_21_inner">
+<path d="M0 7L7 0" stroke="white" stroke-opacity="0.8"/>
+</g>
+</pattern></defs>
+</svg>

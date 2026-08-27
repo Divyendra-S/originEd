@@ -15,6 +15,7 @@ import type { RefObject } from "react";
 import { RotateCw } from "lucide-react";
 import type { PreviewMode } from "@/lib/types";
 import type { PreviewStatus } from "@/hooks/usePreviewBridge";
+import { previewSrc } from "./focus";
 import { PreviewToolbar } from "./PreviewToolbar";
 import { viewportById, type ViewportId } from "./viewport";
 
@@ -29,6 +30,7 @@ export function PreviewCanvas({
   onReload,
   pinCount,
   pinSummary,
+  page,
 }: {
   frameRef: RefObject<HTMLIFrameElement | null>;
   mode: PreviewMode;
@@ -40,6 +42,8 @@ export function PreviewCanvas({
   onReload: () => void;
   pinCount: number;
   pinSummary: string;
+  /** The page being shown — always exactly one (§10). */
+  page: string;
 }) {
   const width = viewportById(viewport).width;
   const error = status.buildError;
@@ -60,9 +64,14 @@ export function PreviewCanvas({
           className="relative flex min-h-0 w-full flex-col overflow-hidden rounded-card bg-white ring-1 ring-oe-border-strong transition-[max-width] duration-300 ease-out"
           style={width ? { maxWidth: width } : undefined}
         >
+          {/* Keyed on the page so switching REPLACES the frame rather than
+              navigating it. Navigating an iframe pushes an entry onto the
+              parent's session history, and three switches would mean three
+              presses of Back before the studio itself goes anywhere. */}
           <iframe
+            key={page}
             ref={frameRef}
-            src="/preview"
+            src={previewSrc(page)}
             title="Preview"
             className="size-full border-0"
             // Same-origin by design — sandboxing it would break the bridge.

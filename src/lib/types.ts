@@ -246,7 +246,6 @@ export type PickGesture = "click" | "drag";
 
 export type StudioToPreview =
   | { source: "studio"; type: "set_mode"; mode: PreviewMode }
-  | { source: "studio"; type: "set_selection"; sectionSlug: string | null }
   | { source: "studio"; type: "set_pins"; pins: PinPayload[] }
   | { source: "studio"; type: "flash"; sectionSlug: string };
 

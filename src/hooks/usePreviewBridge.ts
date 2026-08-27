@@ -3,13 +3,14 @@
 /**
  * The studio half of the postMessage protocol (§11).
  *
- * Owns: the iframe ref, the Browse/Select mode, what's hovered/selected, the
- * section list the preview reported, and the compile/error status shown in the
- * strip under the frame.
+ * Owns: the iframe ref, the Browse/Select mode, what's hovered, which page is
+ * on screen, the section list the preview reported, and the compile/error status
+ * shown in the strip under the frame.
  *
  * Not a TanStack Query concern — this is a push channel and live UI state (§13).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { livePage, previewSrc } from "@/components/studio/preview/focus";
 import type {
   PickGesture,
   PickedTarget,
@@ -19,6 +20,7 @@ import type {
   SectionInfo,
   StudioToPreview,
 } from "@/lib/types";
+import { HOME_PAGE, pages } from "@/workspace/manifest";
 
 export interface PreviewStatus {
   compiledMs: number | null;
@@ -49,8 +51,13 @@ export interface PreviewBridge {
   hovered: string | null;
   /** What a click would pin right now — the element label, not the section's. */
   hoveredLabel: string | null;
-  selected: string | null;
-  setSelected: (slug: string | null) => void;
+  /**
+   * The page the preview is rendering — always exactly one (§10). Already
+   * filtered: a page the agent deleted reads as the first one rather than as an
+   * empty frame (see `livePage`).
+   */
+  page: string;
+  setPage: (slug: string) => void;
   status: PreviewStatus;
   /** Dismiss a build error the user has read (§12). */
   clearBuildError: () => void;
@@ -93,7 +100,7 @@ export function usePreviewBridge(): PreviewBridge {
   const [sections, setSections] = useState<SectionInfo[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
   const [hoveredLabel, setHoveredLabel] = useState<string | null>(null);
-  const [selected, setSelectedState] = useState<string | null>(null);
+  const [page, setPage] = useState<string>(HOME_PAGE);
   const [status, setStatus] = useState<PreviewStatus>({ compiledMs: null, buildError: null });
 
   const send = useCallback((message: StudioToPreview) => {
@@ -121,16 +128,14 @@ export function usePreviewBridge(): PreviewBridge {
           setHovered(msg.sectionSlug);
           setHoveredLabel(msg.label);
           break;
-        case "pick": {
-          // Echo the section back: the Inspector draws the hover outline but not
-          // the selected one, so without this the tint vanishes the moment the
-          // pointer leaves the section the user just picked in.
-          const slug = msg.targets[0]?.sectionSlug ?? null;
-          setSelectedState(slug);
-          send({ source: "studio", type: "set_selection", sectionSlug: slug });
+        case "pick":
+          // Nothing is echoed back. The pin itself is the mark — it outlines the
+          // element where the element actually is, and it survives the pointer
+          // leaving. A second, section-wide highlight on top of it was the thing
+          // that made one click look like it had selected the element AND
+          // everything around it.
           pickHandler.current?.(msg.targets, msg.note, msg.gesture);
           break;
-        }
         case "pin_click":
           pinClickHandler.current?.(msg.key);
           break;
@@ -160,16 +165,7 @@ export function usePreviewBridge(): PreviewBridge {
       if (next === "browse") {
         setHovered(null);
         setHoveredLabel(null);
-        setSelectedState(null);
       }
-    },
-    [send],
-  );
-
-  const setSelected = useCallback(
-    (slug: string | null) => {
-      setSelectedState(slug);
-      send({ source: "studio", type: "set_selection", sectionSlug: slug });
     },
     [send],
   );
@@ -204,7 +200,10 @@ export function usePreviewBridge(): PreviewBridge {
       for (const wait of [400, 900]) {
         await new Promise((resolve) => setTimeout(resolve, wait));
         try {
-          const res = await fetch("/preview", { cache: "no-store" });
+          // The page ON SCREEN, not `/preview` — the two render different
+          // sections now, and probing the wrong one would clear an error the
+          // user is looking at (or invent one they are not).
+          const res = await fetch(previewSrc(page), { cache: "no-store" });
           if (res.ok) {
             // Clear only what the probe itself set. A page that renders can
             // still be throwing after hydration, and that error is not ours.
@@ -226,7 +225,7 @@ export function usePreviewBridge(): PreviewBridge {
         }
       }
     })();
-  }, []);
+  }, [page]);
 
   const setPins = useCallback(
     (pins: PinPayload[]) => {
@@ -270,8 +269,10 @@ export function usePreviewBridge(): PreviewBridge {
     sections,
     hovered,
     hoveredLabel,
-    selected,
-    setSelected,
+    // Filtered here rather than at the call site, so nothing downstream can hold
+    // a page the manifest no longer has.
+    page: livePage(page, pages),
+    setPage,
     status,
     clearBuildError,
     probe,

@@ -1,0 +1,53 @@
+/* hero-08 — Procura AI procurement hero (word globe + drafting rails) */
+
+@theme {
+  --font-helvetica: Helvetica, Arial, ui-sans-serif, sans-serif;
+}
+
+/* People chips — hard layout so preview can't collapse caption out of flow. */
+.ok-h08-person {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 12px !important;
+  background: #222 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  z-index: 20 !important;
+  box-sizing: border-box !important;
+  width: max-content !important;
+  max-width: none !important;
+}
+
+.ok-h08-person img {
+  width: 32px !important;
+  height: 32px !important;
+  max-width: none !important;
+  border-radius: 9999px !important;
+  object-fit: cover !important;
+  flex: 0 0 32px !important;
+  display: block !important;
+}
+
+.ok-h08-person-copy {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 0 0 auto !important;
+  min-width: max-content !important;
+}
+
+.ok-h08-person-copy p {
+  margin: 0 !important;
+  color: #fff !important;
+  line-height: normal !important;
+  white-space: nowrap !important;
+}
+
+.ok-h08-person-name {
+  font-size: 14px !important;
+}
+
+.ok-h08-person-role {
+  font-size: 12px !important;
+  opacity: 0.7 !important;
+}
