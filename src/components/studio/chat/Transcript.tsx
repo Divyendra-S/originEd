@@ -47,7 +47,8 @@ function EmptyState() {
           <span className="w-14 shrink-0 text-oe-muted">click</span>pin one element
         </li>
         <li className="flex gap-2">
-          <span className="w-14 shrink-0 text-oe-muted">drag</span>pin a region, then comment
+          <span className="w-14 shrink-0 text-oe-muted">drag</span>pin a region, say what
+          should change, ↵
         </li>
         <li className="flex gap-2">
           <span className="w-14 shrink-0 text-oe-muted">S / B</span>select and browse modes

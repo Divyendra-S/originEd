@@ -11,6 +11,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  PickGesture,
   PickedTarget,
   PinPayload,
   PreviewMode,
@@ -32,6 +33,12 @@ export interface PreviewStatus {
     from: "preview" | "probe";
   } | null;
 }
+
+export type PickHandler = (
+  targets: PickedTarget[],
+  note: string | null,
+  gesture: PickGesture,
+) => void;
 
 export interface PreviewBridge {
   frameRef: React.RefObject<HTMLIFrameElement | null>;
@@ -56,9 +63,10 @@ export interface PreviewBridge {
    * Fires when the user picks something in Select mode — one click, or one
    * drag. `note` is what they typed into the popup: `null` when there was no
    * popup at all, so "pinned in passing" and "pinned and said nothing" stay
-   * distinguishable.
+   * distinguishable. `gesture` says which of the two it was, because a drag
+   * that encloses one element must not be mistaken for a click and unpin it.
    */
-  onPick: (handler: (targets: PickedTarget[], note: string | null) => void) => void;
+  onPick: (handler: PickHandler) => void;
   /** Draw markers and outlines on the page for these pins (§11). */
   setPins: (pins: PinPayload[]) => void;
   /** Fires when the user clicks a pin marker inside the preview. */
@@ -69,7 +77,7 @@ export interface PreviewBridge {
 
 export function usePreviewBridge(): PreviewBridge {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
-  const pickHandler = useRef<((targets: PickedTarget[], note: string | null) => void) | null>(null);
+  const pickHandler = useRef<PickHandler | null>(null);
   const pinClickHandler = useRef<((key: string) => void) | null>(null);
   const unresolvedHandler = useRef<((keys: string[]) => void) | null>(null);
   // The preview is stateless across reloads; the studio holds the truth and
@@ -78,7 +86,10 @@ export function usePreviewBridge(): PreviewBridge {
   const pinsRef = useRef<PinPayload[]>([]);
 
   const [ready, setReady] = useState(false);
-  const [mode, setModeState] = useState<PreviewMode>("browse");
+  // Select, not Browse. Pointing at the page is what the tool is FOR, and a
+  // mode you have to arm before the headline feature works is a mode most
+  // people never find. Esc (and B) still get you out to plain browsing.
+  const [mode, setModeState] = useState<PreviewMode>("select");
   const [sections, setSections] = useState<SectionInfo[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
   const [hoveredLabel, setHoveredLabel] = useState<string | null>(null);
@@ -117,7 +128,7 @@ export function usePreviewBridge(): PreviewBridge {
           const slug = msg.targets[0]?.sectionSlug ?? null;
           setSelectedState(slug);
           send({ source: "studio", type: "set_selection", sectionSlug: slug });
-          pickHandler.current?.(msg.targets, msg.note);
+          pickHandler.current?.(msg.targets, msg.note, msg.gesture);
           break;
         }
         case "pin_click":
@@ -230,12 +241,9 @@ export function usePreviewBridge(): PreviewBridge {
     if (frameRef.current) frameRef.current.src = frameRef.current.src;
   }, []);
 
-  const onPick = useCallback(
-    (handler: (targets: PickedTarget[], note: string | null) => void) => {
-      pickHandler.current = handler;
-    },
-    [],
-  );
+  const onPick = useCallback((handler: PickHandler) => {
+    pickHandler.current = handler;
+  }, []);
 
   const onPinClick = useCallback((handler: (key: string) => void) => {
     pinClickHandler.current = handler;

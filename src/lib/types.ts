@@ -241,6 +241,9 @@ export type Attachment =
   | string
   | Pick<ElementRef, "sectionSlug" | "path" | "tag" | "text" | "label" | "trail" | "nth">;
 
+/** Which gesture produced a pick. See the `pick` variant below. */
+export type PickGesture = "click" | "drag";
+
 export type StudioToPreview =
   | { source: "studio"; type: "set_mode"; mode: PreviewMode }
   | { source: "studio"; type: "set_selection"; sectionSlug: string | null }
@@ -251,12 +254,27 @@ export type PreviewToStudio =
   | { source: "preview"; type: "ready"; sections: SectionInfo[] }
   | { source: "preview"; type: "hover"; sectionSlug: string | null; label: string | null }
   /**
-   * One drag, or one click, resolved into targets. `note` is what the user typed
-   * into the popup — `null` when there was no popup (a plain click), `""` when
-   * they opened one and pinned without writing anything. The studio tells those
-   * apart: only a non-empty note reaches the composer.
+   * One drag, or one click, resolved into targets.
+   *
+   * `gesture` is the thing the studio needs and cannot infer. A click TOGGLES —
+   * clicking a pinned heading again has to unpin it or the second click is dead
+   * — while a drag only ever ADDS. A drag that happens to enclose exactly one
+   * element is indistinguishable from a click by target count alone, and
+   * guessing wrong silently unpins what the user just selected.
+   *
+   * `note` is what they typed into the popup: `null` when there was no popup at
+   * all, `""` when they opened one and pressed Enter without writing anything,
+   * and a non-empty string means SEND. The popup IS the composer for that
+   * gesture — parking the text in a second input the user then has to find is
+   * exactly the hop this field exists to remove.
    */
-  | { source: "preview"; type: "pick"; targets: PickedTarget[]; note: string | null }
+  | {
+      source: "preview";
+      type: "pick";
+      targets: PickedTarget[];
+      note: string | null;
+      gesture: PickGesture;
+    }
   | { source: "preview"; type: "pin_click"; key: string }
   /** Pins whose element no longer exists — the studio downgrades them (§11). */
   | { source: "preview"; type: "pin_unresolved"; keys: string[] }

@@ -128,8 +128,34 @@ export function jobStreamReducer(state: JobStreamState, action: Action): JobStre
       };
     case "error":
       return { ...state, error: event.message };
-    case "done":
-      return { ...state, status: event.status, done: true, connected: false };
+    case "done": {
+      // A tool still marked `running` when the job ends never got its result:
+      // the run was cancelled, or it threw between the call and the response.
+      // Left alone the spinner turns forever, and a spinning row is the studio
+      // saying it is still editing long after the job is over. Settle them here
+      // rather than in the view, so the archived copy is honest too.
+      const settled: ToolCallView[] = state.tools.map((tool) =>
+        tool.status !== "running"
+          ? tool
+          : {
+              ...tool,
+              status: event.status === "succeeded" ? "ok" : "error",
+              summary: tool.summary ?? (event.status === "succeeded" ? null : "no result"),
+            },
+      );
+      return {
+        ...state,
+        tools: settled,
+        status: event.status,
+        done: true,
+        connected: false,
+        // Archived NOW, not on the next job's reset. The transcript refetches
+        // the moment `done` lands and the persisted model turn reads its tool
+        // rows out of `history` — archiving later blanks them until the user
+        // happens to send something else.
+        history: archive({ ...state, tools: settled }),
+      };
+    }
   }
 }
 

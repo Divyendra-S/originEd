@@ -27,11 +27,19 @@ import {
 } from "@/hooks/useComments";
 import { useCancelJob, useJobStream } from "@/hooks/useJobStream";
 import { usePreviewBridge } from "@/hooks/usePreviewBridge";
-import { isWholeSection, pinLabel, toPinPayload, usePins, type Pinned } from "@/hooks/usePins";
+import {
+  addPins as mergePins,
+  isWholeSection,
+  pinLabel,
+  toPinPayload,
+  usePins,
+  type Pinned,
+} from "@/hooks/usePins";
 import type { Attachment, Comment, JobChanges, PreviewMode } from "@/lib/types";
 import { labelForSlug } from "@/workspace/manifest";
 import { BuildErrorCard } from "./chat/BuildErrorCard";
 import { Composer, type ComposerNotes } from "./chat/Composer";
+import { toolLabel } from "./chat/ToolCard";
 import { Transcript, type TranscriptTurn, type TurnAttachment } from "./chat/Transcript";
 import { PreviewCanvas } from "./preview/PreviewCanvas";
 import { StatusPill } from "./preview/StatusPill";
@@ -86,6 +94,29 @@ function groupForBubble(pins: readonly Pinned[], notesFor: (slug: string) => Com
     if (!isWholeSection(pin)) entry.targets!.push(pin.ref);
   }
   return [...bySection.values()];
+}
+
+/**
+ * Seconds since this mounted, and it is mounted only while a turn is in flight.
+ *
+ * Not decoration, and a component rather than a flag for a reason: most of a
+ * turn is one silent gap — the model composing its next step over a large
+ * context, with no tool call and no token to show for it. Measured on a
+ * one-line edit: the file landed in the preview at 3s and the job ran for
+ * another 53, 44 of them with nothing on screen changing at all. A spinner over
+ * that is indistinguishable from a hang; a clock is not. Mounting it with the
+ * turn is what makes it start at zero without an effect resetting anything.
+ */
+function Elapsed() {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    const startedAt = Date.now();
+    const id = setInterval(() => setSeconds(Math.round((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return seconds > 0 ? <> {seconds}s</> : null;
 }
 
 export function StudioShell() {
@@ -144,6 +175,28 @@ export function StudioShell() {
     },
   });
 
+  const messages = useMemo(() => transcript.data?.messages ?? [], [transcript.data]);
+
+  /**
+   * The model's answer for this job is in Postgres — which also means the job
+   * is over, whatever the stream did or did not deliver.
+   */
+  const modelTurnPersisted = useMemo(
+    () => messages.some((m) => m.role === "model" && m.jobId === activeJobId),
+    [messages, activeJobId],
+  );
+
+  /**
+   * Is a turn still in flight?
+   *
+   * `stream.done` is the fast answer; `modelTurnPersisted` is the durable one.
+   * Both, because a `done` frame that never arrives — the connection died at the
+   * wrong moment, the machine slept through it — would otherwise leave the
+   * composer disabled and the header saying "Working…" over a job that finished
+   * minutes ago, with nothing but a reload to get out of it.
+   */
+  const busy = sendMessage.isPending || Boolean(activeJobId && !stream.done && !modelTurnPersisted);
+
   const onDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!dragging.current) return;
     const rect = splitRef.current?.getBoundingClientRect();
@@ -166,33 +219,95 @@ export function StudioShell() {
   const { onPick, onPinClick, onUnresolved, setPins, setSelected, setMode, selected } = preview;
   const { pinned, toggle, pick, remove, add: addPins, keep: keepPins, reconcile, downgrade } = pins;
 
+  const notesFor = useCallback(
+    (slug: string) => openComments.filter((c) => c.sectionSlug === slug),
+    [openComments],
+  );
+
   /**
-   * One pick from the preview. A click on a single thing TOGGLES — clicking a
-   * pinned heading again has to unpin it or the second click is dead. A drag
-   * ADDS, because a drag that overlaps what you pinned a moment ago would
-   * otherwise silently take half of it away.
+   * Post a turn.
+   *
+   * `override` is what the preview's popup sends with. The targets it just
+   * picked are not in `pinned` yet — React has not re-rendered — and waiting a
+   * tick to read them back out of state would be a race for nothing. Its
+   * presence also means the text did not come from the composer, which is why
+   * a half-written draft down there survives a send from up here.
+   *
+   * Declared above the effects that call it: the `onPick` dependency array is
+   * evaluated during render, so a `send` defined further down would be in the
+   * temporal dead zone and throw before the page ever paints.
+   */
+  const send = useCallback(
+    (text: string, override?: readonly Pinned[]) => {
+      const sending = override ? [...override] : pinned;
+      setPendingUser({ text, attachments: groupForBubble(sending, notesFor), serverId: null });
+      if (!override) setDraft("");
+      // The turn retires the pins it consumed — except the ones carrying notes,
+      // which stay until the job that answers them says so. A failed run would
+      // otherwise strand the notes: still open in Postgres, attached to nothing.
+      keepPins(sending.filter((p) => (noteCounts.get(p.key) ?? 0) > 0).map((p) => p.key));
+
+      sendMessage.mutate(
+        { chatId, text, attachments: sending.map(toWire) },
+        {
+          onSuccess: (data) => {
+            setChatId(data.chatId);
+            setActiveJobId(data.jobId);
+            // Identity, not text-matching: two identical prompts must not
+            // cancel each other out of the transcript.
+            setPendingUser((current) => (current ? { ...current, serverId: data.messageId } : current));
+          },
+          onError: () => setPendingUser(null),
+        },
+      );
+    },
+    [pinned, keepPins, noteCounts, notesFor, chatId, sendMessage],
+  );
+
+  /**
+   * One pick from the preview. Three shapes, and the gesture is what separates
+   * them — never the number of targets, which a one-element drag makes a liar of.
+   *
+   *   click        TOGGLE. Clicking a pinned heading again has to unpin it, or
+   *                the second click is dead.
+   *   drag         ADD. A drag overlapping what you pinned a moment ago must not
+   *                silently take half of it away.
+   *   drag + note  SEND, now. The popup's input is not a feeder for the
+   *                composer: pressing Enter twice, in two different boxes, for
+   *                one thought is exactly the hop this removes.
    *
    * Re-registered whenever the set changes: the handler lives in a ref inside
    * the bridge, so a stale closure here would read yesterday's pins.
    */
   useEffect(() => {
-    onPick((targets, note) => {
-      if (note === null && targets.length === 1) {
+    onPick((targets, note, gesture) => {
+      if (note) {
+        // A turn is already running and the queue is one deep (§2.3). Park the
+        // note in the composer rather than dropping it — the targets are pinned
+        // either way, so it costs one more Enter once this turn lands.
+        if (busy) {
+          setDraft((current) => (current.trim() ? `${current.trim()}\n${note}` : note));
+          setDraftFocus((n) => n + 1);
+          return;
+        }
+        // `mergePins`, not `pinned`: the drag pinned these a moment ago and the
+        // re-render carrying them may not have happened yet. De-duping by key
+        // makes doing it twice free.
+        send(note, mergePins(pinned, targets));
+        return;
+      }
+
+      if (gesture === "click" && targets.length === 1) {
         const target = targets[0];
         const wasPinned = pinned.some((p) => p.key === target.key);
         toggle(target);
         if (wasPinned && selected === target.sectionSlug) setSelected(null);
-      } else {
-        pick(targets);
+        return;
       }
-      // An empty note is not nothing: the user opened the popup, decided the pin
-      // said it, and pressed Enter. Only text reaches the composer.
-      if (note) {
-        setDraft((current) => (current.trim() ? `${current.trim()}\n${note}` : note));
-        setDraftFocus((n) => n + 1);
-      }
+
+      pick(targets);
     });
-  }, [onPick, pinned, toggle, pick, selected, setSelected]);
+  }, [onPick, pinned, toggle, pick, selected, setSelected, send, busy]);
 
   // Clicking the pin marker ON the page. A marker carrying notes opens them —
   // the badge is the only place they are visible from the preview, so making it
@@ -264,40 +379,6 @@ export function StudioShell() {
     [remove, selected, setSelected],
   );
 
-  const notesFor = useCallback(
-    (slug: string) => openComments.filter((c) => c.sectionSlug === slug),
-    [openComments],
-  );
-
-  const send = useCallback(
-    (text: string) => {
-      const sending = pinned;
-      setPendingUser({ text, attachments: groupForBubble(sending, notesFor), serverId: null });
-      setDraft("");
-      // The turn retires the pins it consumed — except the ones carrying notes,
-      // which stay until the job that answers them says so. A failed run would
-      // otherwise strand the notes: still open in Postgres, attached to nothing.
-      keepPins(sending.filter((p) => (noteCounts.get(p.key) ?? 0) > 0).map((p) => p.key));
-
-      sendMessage.mutate(
-        { chatId, text, attachments: sending.map(toWire) },
-        {
-          onSuccess: (data) => {
-            setChatId(data.chatId);
-            setActiveJobId(data.jobId);
-            // Identity, not text-matching: two identical prompts must not
-            // cancel each other out of the transcript.
-            setPendingUser((current) => (current ? { ...current, serverId: data.messageId } : current));
-          },
-          onError: () => setPendingUser(null),
-        },
-      );
-    },
-    [pinned, keepPins, noteCounts, notesFor, chatId, sendMessage],
-  );
-
-  const messages = useMemo(() => transcript.data?.messages ?? [], [transcript.data]);
-
   const changesByJob = useMemo(
     () => new Map((transcript.data?.changes ?? []).map((c) => [c.jobId, c])),
     [transcript.data],
@@ -322,13 +403,6 @@ export function StudioShell() {
       })),
     };
   }, [activeJobId, stream.done, stream.files]);
-
-  // The live bubble is shown until the persisted model turn for this job lands,
-  // so there is never a frame with both and never a frame with neither.
-  const modelTurnPersisted = useMemo(
-    () => messages.some((m) => m.role === "model" && m.jobId === activeJobId),
-    [messages, activeJobId],
-  );
 
   const turns = useMemo<TranscriptTurn[]>(() => {
     const out: TranscriptTurn[] = messages.map((message) => ({
@@ -366,8 +440,6 @@ export function StudioShell() {
     return out;
   }, [messages, pendingUser, activeJobId, modelTurnPersisted, stream, changesByJob, liveChanges]);
 
-  const busy = sendMessage.isPending || Boolean(activeJobId && !stream.done);
-
   const hoveredSection = useMemo(
     () => preview.sections.find((s) => s.slug === preview.hovered)?.label ?? null,
     [preview.sections, preview.hovered],
@@ -404,16 +476,27 @@ export function StudioShell() {
     [noteCounts, openNotes, notesFor, addComment, resolveComment],
   );
 
-  const hint = busy
-    ? stream.connected || sendMessage.isPending
-      ? "Working…"
-      : "Reconnecting…"
-    : preview.mode === "select"
+  /** The tool the agent is inside right now. Everything else is model time. */
+  const runningTool = useMemo(
+    () => stream.tools.find((t) => t.status === "running"),
+    [stream.tools],
+  );
+
+  const phase = sendMessage.isPending
+    ? "Sending"
+    : !stream.connected
+      ? "Reconnecting"
+      : runningTool
+        ? toolLabel(runningTool.name)
+        : "Working";
+
+  const hint =
+    preview.mode === "select"
       ? preview.hoveredLabel
-        ? `Click to pin ${preview.hoveredLabel} · drag for a region`
+        ? `Click to pin ${preview.hoveredLabel} · drag a box to comment`
         : hoveredSection
-          ? `Click to pin ${hoveredSection} · drag for a region`
-          : "Drag over the page to select · Esc to exit"
+          ? `Click to pin ${hoveredSection} · drag a box to comment`
+          : "Click to pin · drag a box and say what should change"
       : null;
 
   return (
@@ -436,7 +519,14 @@ export function StudioShell() {
             busy ? "text-oe-accent-soft" : "text-oe-faint"
           }`}
         >
-          {hint}
+          {busy ? (
+            <>
+              {phase}…
+              <Elapsed />
+            </>
+          ) : (
+            hint
+          )}
         </span>
 
         <StatusPill status={preview.status} ready={preview.ready} onReload={preview.reload} />

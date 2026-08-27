@@ -817,6 +817,10 @@ permanently behind a control bar.
 | **Browse** | a normal site — links, forms, the hero canvas all work | markers live, nothing else | `B` |
 | **Select** | a canvas — pointer events captured, nothing navigates | hover outlines; click pins, drag selects | `S` |
 
+**Select is the default.** Pointing at the page is what this tool is for, and a mode you
+have to find and arm before the headline feature does anything is a mode most people
+never find. Browse is one key away and `Esc` always lands there.
+
 There is deliberately no Comment mode. A note is written where the selection is made —
 in the popup the drag opens — or in the composer against a pinned section.
 
@@ -868,9 +872,12 @@ The preview is a same-origin iframe, so `postMessage` with an explicit `targetOr
 { source:"studio", type:"flash",         sectionSlug }        // after an edit lands
 // preview → parent
 { source:"preview", type:"ready",     sections:{ slug,label,file }[] }
-{ source:"preview", type:"hover",     sectionSlug: string|null }
-{ source:"preview", type:"select",    sectionSlug, label, file }
-{ source:"preview", type:"pin_click", sectionSlug }
+{ source:"preview", type:"hover",     sectionSlug: string|null, label: string|null }
+{ source:"preview", type:"pick",      targets: PickedTarget[],  // one click or one drag
+                                      note: string|null,        // non-empty ⇒ SEND now
+                                      gesture: "click"|"drag" } // click toggles, drag adds
+{ source:"preview", type:"pin_click", key }
+{ source:"preview", type:"pin_unresolved", keys: string[] }
 { source:"preview", type:"compiled",  ms }                    // → status strip
 { source:"preview", type:"build_error", message, stack }      // → status strip + chat
 ```
@@ -925,8 +932,18 @@ input* — so Select has two gestures:
 - **Drag** → a marquee. Everything mostly inside the rectangle is pinned, outermost-wins
   so a box round a card names the card rather than its heading, its paragraph and the
   card; a box that swallows a whole section names the section. Then a small **input
-  opens where the drag ended** — type a sentence, press Enter, and both the targets and
-  the sentence arrive in the composer in one motion.
+  opens where the drag ended**.
+
+The targets are pinned the instant the pointer lifts — *before* the popup opens, and
+whatever happens to it afterwards. The popup is an offer, not a gate: **Enter sends the
+turn from there**, and dismissing it leaves the chips sitting in the composer to be
+written against instead. Routing that text into the composer for a second Enter, in a
+second box, would make one thought cost two submissions.
+
+The studio cannot infer which gesture it is looking at, so the `pick` message carries a
+`gesture` field. Target *count* is not a proxy: a drag that happens to enclose exactly
+one element looks identical to a click, and treating it as one would toggle off what the
+user just selected.
 
 An element is identified by a **runtime signature**, not a source location, and that is
 not a shortcut. Turbopack does emit `{fileName, lineNumber}` as `jsxDEV`'s fifth
@@ -1259,6 +1276,25 @@ The seam that matters: **TanStack Query owns snapshots; the SSE hook owns in-fli
 Do **not** try to model the stream as a query — it's a push channel, not a fetch.
 Mixing them is the usual failure mode here: the stream writes into local reducer state
 during the job, then hands off to Query in one invalidation when the job ends.
+
+### "Still working" is two questions, and both need an answer
+
+**Is the turn over?** `busy` is `!stream.done` **and** no persisted model turn for this
+job. The stream is the fast answer and Postgres is the durable one, because a `done`
+frame that never arrives — connection dropped at the wrong moment, machine asleep —
+would otherwise leave the composer disabled over a job that finished long ago, with
+nothing but a reload to escape. For the same reason a tool still marked `running` when
+`done` lands is settled by the reducer: an eternal spinner is the studio insisting it is
+still editing.
+
+**Is it stuck?** Usually not, and the honest answer is a clock. Most of a turn is one
+silent gap — the model composing its next step over a large context, emitting nothing.
+Measured on a one-line edit to `features.tsx`: `file_changed` at **3s**, then **44s of
+no events at all**, an 8s `typecheck`, `done` at **56s**. The change was visible in the
+preview for the last 53 of those seconds while the header still said "Working". So the
+header names the phase it can name (the running tool, or "Working") and counts seconds
+next to it. Nothing about the job changed; what changed is that a long turn now reads as
+long rather than as hung.
 
 ---
 

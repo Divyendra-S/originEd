@@ -136,6 +136,38 @@ describe("jobStreamReducer", () => {
     });
   });
 
+  describe("a job that ends mid-tool-call", () => {
+    it("settles a tool still running when done arrives", () => {
+      const state = reduce(
+        opened(),
+        { type: "tool_call", id: "c1", name: "edit_file", args: {} },
+        { type: "done", status: "cancelled", filesChanged: 0 },
+      );
+      // Left `running`, its spinner turns forever — the studio claiming it is
+      // still editing over a job that stopped.
+      expect(state.tools[0]).toMatchObject({ status: "error", summary: "no result" });
+    });
+
+    it("keeps a result that did arrive rather than overwriting it", () => {
+      const state = reduce(
+        opened(),
+        { type: "tool_call", id: "c1", name: "edit_file", args: {} },
+        { type: "tool_result", id: "c1", name: "edit_file", ok: true, summary: "1 hunk" },
+        { type: "done", status: "failed", filesChanged: 1 },
+      );
+      expect(state.tools[0]).toMatchObject({ status: "ok", summary: "1 hunk" });
+    });
+
+    it("does not call a dangling tool a failure when the job succeeded", () => {
+      const state = reduce(
+        opened(),
+        { type: "tool_call", id: "c1", name: "read_file", args: {} },
+        { type: "done", status: "succeeded", filesChanged: 0 },
+      );
+      expect(state.tools[0]).toMatchObject({ status: "ok", summary: null });
+    });
+  });
+
   describe("history", () => {
     it("reset archives the finished job's tool cards under its id", () => {
       const first = reduce(
@@ -150,6 +182,21 @@ describe("jobStreamReducer", () => {
       expect(second.tools).toHaveLength(0);
       expect(second.text).toBe("");
       expect(second.history["job-1"]).toHaveLength(1);
+    });
+
+    it("archives on done, not only on the next job's reset", () => {
+      // The transcript refetches the moment `done` lands and the persisted model
+      // turn reads its tool rows out of `history`. Archiving on the NEXT reset
+      // blanks them in between — for as long as the user does not send again.
+      const state = reduce(
+        opened("job-1"),
+        { type: "tool_call", id: "c1", name: "edit_file", args: {} },
+        { type: "tool_result", id: "c1", name: "edit_file", ok: true, summary: "1 hunk" },
+        { type: "done", status: "succeeded", filesChanged: 1 },
+      );
+      expect(state.history["job-1"]).toHaveLength(1);
+      // And the archived copy is the settled one, not a frozen spinner.
+      expect(state.history["job-1"][0].status).toBe("ok");
     });
 
     it("archives across several jobs without losing earlier ones", () => {

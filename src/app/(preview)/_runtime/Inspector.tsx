@@ -6,15 +6,25 @@
  * Two gestures, and the difference between them is the whole feature:
  *
  *   click — pin the smallest meaningful thing under the cursor, immediately.
- *   drag  — rubber-band a region, pin everything it encloses, and open an input
- *           right there so the note and the target are written in one motion.
+ *   drag  — rubber-band a region, pin everything it encloses, AND open an input
+ *           right there. The pins land in the composer the moment the pointer
+ *           comes up, so the popup is an offer, not a gate: type and press Enter
+ *           to send the turn from here, or ignore it and write in the composer
+ *           against the chips that are already waiting there.
  *
  * Deliberately OUTSIDE src/workspace/: this is the lens the user watches the
  * page through, and the agent must not be able to edit it.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import type { ElementRef, PickedTarget, PreviewMode, PreviewToStudio, StudioToPreview } from "@/lib/types";
+import type {
+  ElementRef,
+  PickGesture,
+  PickedTarget,
+  PreviewMode,
+  PreviewToStudio,
+  StudioToPreview,
+} from "@/lib/types";
 import { sections } from "@/workspace/manifest";
 import {
   boundaryFrom,
@@ -116,9 +126,16 @@ export function Inspector() {
     setNote("");
   }, []);
 
+  /**
+   * Hand targets to the studio. A non-empty `text` means "send this turn now" —
+   * so the popup dismisses itself on the way, because the answer to it is about
+   * to appear in the chat.
+   */
   const commit = useCallback(
-    (targets: PickedTarget[], text: string | null) => {
-      if (targets.length > 0) post({ source: "preview", type: "pick", targets, note: text });
+    (targets: PickedTarget[], text: string | null, gesture: PickGesture) => {
+      if (targets.length > 0) {
+        post({ source: "preview", type: "pick", targets, note: text, gesture });
+      }
       closePopup();
     },
     [closePopup],
@@ -262,13 +279,18 @@ export function Inspector() {
         const boundary = boundaryFrom(hit);
         if (!boundary || !hit) return;
         const el = meaningfulFrom(boundary, hit);
-        commit([picked(boundary, el === boundary ? sectionRef(boundary) : refFor(boundary, el))], null);
+        const ref = el === boundary ? sectionRef(boundary) : refFor(boundary, el);
+        commit([picked(boundary, ref)], null, "click");
         return;
       }
 
       const box = boxFrom(start.x, start.y, e.clientX, e.clientY);
       const targets = targetsInBox(doc, box);
       if (targets.length === 0) return;
+      // Pinned FIRST, popup second. The selection is a fact the moment the
+      // pointer lifts — the chips are already in the composer, so dismissing the
+      // popup costs the user nothing and they can write over there instead.
+      post({ source: "preview", type: "pick", targets, note: null, gesture: "drag" });
       setNote("");
       setPopup({ box, targets });
     }
@@ -397,16 +419,23 @@ export function Inspector() {
               onChange={(e) => setNote(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation();
-                if (e.key === "Enter") commit(popup.targets, note.trim());
+                // Enter SENDS. The targets are already pinned, so an empty box
+                // has nothing left to hand over — just get the popup out of the
+                // way rather than posting an empty turn.
+                if (e.key === "Enter") {
+                  const text = note.trim();
+                  if (text) commit(popup.targets, text, "drag");
+                  else closePopup();
+                }
                 if (e.key === "Escape") closePopup();
               }}
             />
 
             <div className="oe-popup-foot">
               <kbd className="oe-kbd">↵</kbd>
-              <span>add to chat</span>
+              <span>send</span>
               <kbd className="oe-kbd">esc</kbd>
-              <span>cancel</span>
+              <span>keep pinned</span>
             </div>
           </motion.div>
         )}

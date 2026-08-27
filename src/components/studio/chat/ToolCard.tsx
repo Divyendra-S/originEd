@@ -23,6 +23,11 @@ const LABELS: Record<string, string> = {
   typecheck: "Typecheck",
 };
 
+/** Also the header's — "Typecheck… 12s" beats "Working…" when we know better. */
+export function toolLabel(name: string): string {
+  return LABELS[name] ?? name;
+}
+
 /** The one argument worth showing inline — a path beats `{"path":"…","find":"…"}`. */
 function subject(tool: ToolCallView): string | null {
   const args = tool.args;
@@ -52,7 +57,7 @@ export function ToolCard({ tool }: { tool: ToolCallView }) {
       </span>
 
       <span className={`shrink-0 ${failed ? "text-oe-bad" : "text-oe-muted"}`}>
-        {LABELS[tool.name] ?? tool.name}
+        {toolLabel(tool.name)}
       </span>
 
       {path && (
